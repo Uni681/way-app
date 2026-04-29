@@ -1,30 +1,406 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
+import type { Chat, DrinkItem, DrinkUse, Message, Reaction } from '@/lib/types'
+import DrinkBar from './_components/DrinkBar'
+import MessageItem from './_components/MessageItem'
 
+// ── フィードアイテム型 ───────────────────────────────────────────
+type FeedMsg = { kind: 'message' } & Message
+type FeedDrink = {
+  kind: 'drink'
+  id: string
+  sender_id: string
+  created_at: string
+  item: Pick<DrinkItem, 'emoji' | 'name' | 'key'>
+}
+type FeedItem = FeedMsg | FeedDrink
+
+// ── カウントダウン ────────────────────────────────────────────────
+function useCountdown(expiresAt: string | null) {
+  const [t, setT] = useState({ h: 0, m: 0, s: 0 })
+  useEffect(() => {
+    if (!expiresAt) return
+    function tick() {
+      const diff = new Date(expiresAt!).getTime() - Date.now()
+      if (diff <= 0) { setT({ h: 0, m: 0, s: 0 }); return }
+      setT({
+        h: Math.floor(diff / 3600000),
+        m: Math.floor((diff % 3600000) / 60000),
+        s: Math.floor((diff % 60000) / 1000),
+      })
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [expiresAt])
+  return t
+}
+
+function pad(n: number) { return n.toString().padStart(2, '0') }
+
+// ── メイン ────────────────────────────────────────────────────────
 export default function ChatPage() {
-  const { id } = useParams<{ id: string }>()
+  const { id: chatId } = useParams<{ id: string }>()
+  const router = useRouter()
+
+  const [userId, setUserId] = useState<string | null>(null)
+  const [chat, setChat] = useState<Chat | null>(null)
+  const [otherCodename, setOtherCodename] = useState('')
+  const [feed, setFeed] = useState<FeedItem[]>([])
+  const [drinkItems, setDrinkItems] = useState<DrinkItem[]>([])
+  const [input, setInput] = useState('')
+  const [drinkBarOpen, setDrinkBarOpen] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const messageIdsRef = useRef<Set<string>>(new Set())
+  const reactionsRef = useRef<Map<string, Reaction[]>>(new Map())
+
+  const timer = useCountdown(chat?.expires_at ?? null)
+  const timerCritical = timer.h === 0 && timer.m < 60
+  const freed = chat?.status === 'freed'
+
+  // ── データ取得 ─────────────────────────────────────────────────
+  useEffect(() => {
+    async function init() {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { router.replace('/auth'); return }
+      const uid = session.user.id
+      setUserId(uid)
+
+      // チャット + 相手プロフィール
+      const { data: chatData } = await supabase
+        .from('chats')
+        .select(`
+          id, user1_id, user2_id, expires_at, status, round_trip_count, freed_at,
+          user1:user1_id ( codename ),
+          user2:user2_id ( codename )
+        `)
+        .eq('id', chatId)
+        .single()
+
+      if (!chatData) { router.replace('/'); return }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = chatData as any
+      setChat({
+        id: raw.id,
+        user1_id: raw.user1_id,
+        user2_id: raw.user2_id,
+        expires_at: raw.expires_at,
+        status: raw.status,
+        round_trip_count: raw.round_trip_count,
+        freed_at: raw.freed_at,
+      })
+      setOtherCodename(
+        raw.user1_id === uid ? raw.user2.codename : raw.user1.codename
+      )
+
+      // メッセージ + リアクション
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('id, sender_id, content, created_at, is_deleted, reactions(emoji, user_id)')
+        .eq('chat_id', chatId)
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: true })
+
+      const messages: FeedMsg[] = (msgs ?? []).map(m => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const r = (m as any).reactions as Reaction[] ?? []
+        messageIdsRef.current.add(m.id)
+        reactionsRef.current.set(m.id, r)
+        return { kind: 'message' as const, chat_id: chatId, ...m, reactions: r }
+      })
+
+      // ドリンク使用ログ
+      const { data: drinks } = await supabase
+        .from('drink_bar_uses')
+        .select('id, sender_id, used_at, item:item_id(id, emoji, name, key)')
+        .eq('chat_id', chatId)
+        .order('used_at', { ascending: true })
+
+      const drinkFeed: FeedDrink[] = (drinks ?? []).map(d => ({
+        kind: 'drink',
+        id: d.id,
+        sender_id: d.sender_id,
+        created_at: (d as any).used_at,
+        item: (d as any).item,
+      }))
+
+      // マージ + ソート
+      setFeed(
+        [...messages, ...drinkFeed].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        )
+      )
+
+      // ドリンクバーアイテム
+      const { data: items } = await supabase
+        .from('drink_bar_items')
+        .select('*')
+        .eq('is_active', true)
+        .order('is_free', { ascending: false })
+
+      setDrinkItems(items ?? [])
+      setLoading(false)
+    }
+
+    init()
+  }, [chatId, router])
+
+  // ── Realtime ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return
+
+    const channel = supabase
+      .channel(`chat-room-${chatId}`)
+
+      // 新メッセージ
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
+        (payload) => {
+          const m = payload.new as Message & { is_deleted: boolean }
+          if (m.is_deleted) return
+          messageIdsRef.current.add(m.id)
+          reactionsRef.current.set(m.id, [])
+          const item: FeedMsg = { kind: 'message', ...m, reactions: [] }
+          setFeed(prev => [...prev, item])
+        }
+      )
+
+      // 新ドリンク
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'drink_bar_uses', filter: `chat_id=eq.${chatId}` },
+        async (payload) => {
+          const d = payload.new as { id: string; sender_id: string; used_at: string; item_id: string }
+          // アイテム名称をローカルキャッシュから取得
+          const item = drinkItems.find(i => i.id === d.item_id)
+          if (!item) return
+          const feedItem: FeedDrink = {
+            kind: 'drink',
+            id: d.id,
+            sender_id: d.sender_id,
+            created_at: d.used_at,
+            item: { emoji: item.emoji, name: item.name, key: item.key },
+          }
+          setFeed(prev => [...prev, feedItem])
+        }
+      )
+
+      // リアクション追加
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.new as Reaction & { message_id: string }
+          if (!messageIdsRef.current.has(r.message_id)) return
+          setFeed(prev =>
+            prev.map(item =>
+              item.kind === 'message' && item.id === r.message_id
+                ? { ...item, reactions: [...item.reactions, { emoji: r.emoji, user_id: r.user_id }] }
+                : item
+            )
+          )
+        }
+      )
+
+      // リアクション削除
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.old as Reaction & { message_id: string }
+          if (!messageIdsRef.current.has(r.message_id)) return
+          setFeed(prev =>
+            prev.map(item =>
+              item.kind === 'message' && item.id === r.message_id
+                ? { ...item, reactions: item.reactions.filter(x => !(x.emoji === r.emoji && x.user_id === r.user_id)) }
+                : item
+            )
+          )
+        }
+      )
+
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [chatId, userId, drinkItems])
+
+  // ── スクロール ─────────────────────────────────────────────────
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [feed])
+
+  // ── 送信 ────────────────────────────────────────────────────────
+  async function handleSend() {
+    if (!input.trim() || !userId || sending) return
+    setSending(true)
+    await supabase
+      .from('messages')
+      .insert({ chat_id: chatId, sender_id: userId, content: input.trim() })
+    setInput('')
+    setSending(false)
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  // ── ドリンク送信 ─────────────────────────────────────────────────
+  async function handleDrinkSend(item: DrinkItem) {
+    if (!userId || sending) return
+    setSending(true)
+    setDrinkBarOpen(false)
+    await supabase
+      .from('drink_bar_uses')
+      .insert({ chat_id: chatId, sender_id: userId, item_id: item.id })
+    setSending(false)
+  }
+
+  // ── リアクション ─────────────────────────────────────────────────
+  const handleReact = useCallback(async (messageId: string, emoji: string) => {
+    if (!userId) return
+    const existing = feed.find(
+      f => f.kind === 'message' && f.id === messageId
+    ) as FeedMsg | undefined
+    const already = existing?.reactions.some(r => r.emoji === emoji && r.user_id === userId)
+
+    if (already) {
+      await supabase
+        .from('reactions')
+        .delete()
+        .eq('message_id', messageId)
+        .eq('user_id', userId)
+        .eq('emoji', emoji)
+    } else {
+      await supabase
+        .from('reactions')
+        .insert({ message_id: messageId, user_id: userId, emoji })
+    }
+  }, [userId, feed])
+
+  // ── ローディング ──────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-way-base flex items-center justify-center">
+        <p className="text-way-muted text-sm">…</p>
+      </div>
+    )
+  }
 
   return (
     <div
-      className="min-h-screen bg-way-base flex flex-col items-center justify-center px-6"
+      className="h-screen flex flex-col bg-way-base"
       style={{ maxWidth: 430, margin: '0 auto' }}
     >
-      <div className="text-center space-y-4 w-full max-w-xs">
-        <p className="text-xs text-way-muted uppercase tracking-widest">マッチ成立</p>
-        <h1 className="text-2xl font-bold text-way-text">チャット開始</h1>
-        <p className="text-sm text-way-muted leading-relaxed">
-          チャット画面は近日実装予定です。
-        </p>
-        <p className="text-xs font-mono text-way-muted break-all opacity-50">{id}</p>
-        <Link
-          href="/"
-          className="block py-3 rounded-2xl bg-way-green text-white text-sm font-medium text-center"
-        >
-          ← ホームへ戻る
+      {/* ── ヘッダー ── */}
+      <header className="flex items-center gap-3 px-4 py-3 border-b border-way-wood-light shrink-0">
+        <Link href="/" className="text-way-muted hover:text-way-text transition-colors text-lg">
+          ←
         </Link>
-      </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-way-text truncate">{otherCodename}</p>
+        </div>
+        {/* タイマー */}
+        {freed ? (
+          <span className="text-xs text-way-muted px-2 py-1 rounded-full border border-way-wood-light">
+            タイマーなし
+          </span>
+        ) : (
+          <span
+            className="text-sm font-mono font-medium px-2 py-1 rounded-full border"
+            style={{
+              color: timerCritical ? 'var(--way-terracotta)' : 'var(--way-muted)',
+              borderColor: timerCritical ? 'var(--way-terracotta)' : 'var(--way-wood-light)',
+            }}
+          >
+            {pad(timer.h)}:{pad(timer.m)}:{pad(timer.s)}
+          </span>
+        )}
+      </header>
+
+      {/* ── メッセージ一覧 ── */}
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {feed.map(item => {
+          if (item.kind === 'drink') {
+            const isMine = item.sender_id === userId
+            return (
+              <div key={item.id} className="flex justify-center">
+                <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-way-surface border border-way-wood-light text-sm text-way-muted">
+                  <span className="text-xl">{item.item.emoji}</span>
+                  <span>{isMine ? 'あなたが' : `${otherCodename}が`} {item.item.name} を送った</span>
+                </div>
+              </div>
+            )
+          }
+
+          return (
+            <MessageItem
+              key={item.id}
+              message={item}
+              isMine={item.sender_id === userId}
+              userId={userId!}
+              onReact={handleReact}
+            />
+          )
+        })}
+        <div ref={bottomRef} />
+      </main>
+
+      {/* ── 入力欄 ── */}
+      <footer className="px-4 py-3 border-t border-way-wood-light shrink-0 bg-way-base">
+        <div className="flex items-end gap-2">
+          {/* ドリンクバーボタン */}
+          <button
+            onClick={() => setDrinkBarOpen(v => !v)}
+            className="w-10 h-10 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center text-lg shrink-0 hover:bg-way-wood transition-colors"
+            aria-label="ドリンクバー"
+          >
+            🥤
+          </button>
+
+          {/* テキスト入力 */}
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="メッセージ"
+            rows={1}
+            className="flex-1 px-4 py-2.5 rounded-2xl border border-way-wood bg-way-surface text-way-text text-sm placeholder-way-muted outline-none focus:border-way-green resize-none transition-colors"
+            style={{ maxHeight: 120, overflowY: 'auto' }}
+          />
+
+          {/* 送信ボタン */}
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || sending}
+            className="w-10 h-10 rounded-full bg-way-green flex items-center justify-center text-white shrink-0 disabled:opacity-40 transition-opacity"
+            aria-label="送信"
+          >
+            ↑
+          </button>
+        </div>
+      </footer>
+
+      {/* ── ドリンクバー ── */}
+      {drinkBarOpen && (
+        <DrinkBar
+          items={drinkItems}
+          onSend={handleDrinkSend}
+          onClose={() => setDrinkBarOpen(false)}
+          sending={sending}
+        />
+      )}
     </div>
   )
 }

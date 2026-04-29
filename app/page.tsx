@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import VoiceBubbles from './_components/VoiceBubbles'
 import VoiceThrow from './_components/VoiceThrow'
-import VoiceCircles from './_components/VoiceCircles'
 import VoiceTimeline from './_components/VoiceTimeline'
 import type { Voice, Profile } from '@/lib/types'
 
@@ -31,7 +31,6 @@ export default function Home() {
 
       setProfile({ id: prof.id, codename: prof.codename, avatar_url: prof.avatar_url })
 
-      // 自分の待機中の声
       const { data: myVoices } = await supabase
         .from('voices')
         .select('*')
@@ -41,7 +40,6 @@ export default function Home() {
 
       if (myVoices?.length) setActiveVoice(myVoices[0])
 
-      // タイムライン（他ユーザーの待機中の声）
       const { data: timeline } = await supabase
         .from('voices')
         .select('*')
@@ -57,24 +55,20 @@ export default function Home() {
     init()
   }, [router])
 
-  // 自分の声がマッチしたらチャットへ遷移（Realtime）
+  // 自分の声がマッチしたらチャットへ（Realtime）
   useEffect(() => {
     if (!activeVoice) return
-
     const channel = supabase
       .channel(`voice-${activeVoice.id}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'voices', filter: `id=eq.${activeVoice.id}` },
         (payload) => {
-          const updated = payload.new as Voice
-          if (updated.status === 'matched' && updated.chat_id) {
-            router.push(`/chat/${updated.chat_id}`)
-          }
+          const v = payload.new as Voice
+          if (v.status === 'matched' && v.chat_id) router.push(`/chat/${v.chat_id}`)
         }
       )
       .subscribe()
-
     return () => { supabase.removeChannel(channel) }
   }, [activeVoice?.id, router])
 
@@ -90,22 +84,16 @@ export default function Home() {
 
   async function handleCancel() {
     if (!activeVoice) return
-    await supabase
-      .from('voices')
-      .update({ status: 'expired' })
-      .eq('id', activeVoice.id)
+    await supabase.from('voices').update({ status: 'expired' }).eq('id', activeVoice.id)
     setActiveVoice(null)
   }
 
   async function handleReceive(voice: Voice) {
     const { data, error } = await supabase.rpc('match_voice', { p_voice_id: voice.id })
-
     if (error || data?.error) {
-      // マッチ失敗（取られた or 自分の声）→ タイムラインから除去して終了
       setTimelineVoices(prev => prev.filter(v => v.id !== voice.id))
       return
     }
-
     router.push(`/chat/${data.chat_id}`)
   }
 
@@ -117,12 +105,12 @@ export default function Home() {
     )
   }
 
-  const circleVoices = timelineVoices.slice(0, 3)
+  // バブルに渡す声（最大3件、タイムラインと共有）
+  const bubbleVoices = timelineVoices.slice(0, 3)
 
   return (
     <div className="min-h-screen flex flex-col bg-way-base" style={{ maxWidth: 430, margin: '0 auto' }}>
-      {/* ヘッダー */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-way-wood-light">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-way-wood-light shrink-0">
         <h1
           className="text-2xl font-bold tracking-widest text-way-text"
           style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}
@@ -134,13 +122,15 @@ export default function Home() {
         </div>
       </header>
 
-      {/* メイン */}
       <main className="flex-1 flex flex-col overflow-y-auto">
-        {/* 声を受ける + 投げる エリア */}
-        <section className="flex flex-col items-center justify-center gap-10 px-6 py-12 min-h-[55vh]">
-          {/* 待機中でないときだけ丸を表示 */}
-          {!activeVoice && circleVoices.length > 0 && (
-            <VoiceCircles voices={circleVoices} onReceive={handleReceive} />
+        {/* 受ける + 投げる */}
+        <section className="flex flex-col items-center gap-8 px-4 pt-10 pb-8">
+          {!activeVoice && (
+            <VoiceBubbles
+              initialVoices={bubbleVoices}
+              userId={profile!.id}
+              onReceive={handleReceive}
+            />
           )}
           <VoiceThrow
             activeVoice={activeVoice}
