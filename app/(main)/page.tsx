@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import VoiceBubbles from './_components/VoiceBubbles'
-import VoiceThrow from './_components/VoiceThrow'
-import VoiceTimeline from './_components/VoiceTimeline'
+import VoiceBubbles from '@/app/_components/VoiceBubbles'
+import VoiceThrow from '@/app/_components/VoiceThrow'
+import VoiceTimeline from '@/app/_components/VoiceTimeline'
 import type { Voice, Profile } from '@/lib/types'
 
 export default function Home() {
@@ -55,7 +55,6 @@ export default function Home() {
     init()
   }, [router])
 
-  // 自分の声がマッチしたらチャットへ（Realtime）
   useEffect(() => {
     if (!activeVoice) return
     const channel = supabase
@@ -99,17 +98,16 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-way-base flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center">
         <p className="text-way-muted text-sm">…</p>
       </div>
     )
   }
 
-  // バブルに渡す声（最大3件、タイムラインと共有）
   const bubbleVoices = timelineVoices.slice(0, 3)
 
   return (
-    <div className="min-h-screen flex flex-col bg-way-base" style={{ maxWidth: 430, margin: '0 auto' }}>
+    <>
       <header className="flex items-center justify-between px-6 py-4 border-b border-way-wood-light shrink-0">
         <h1
           className="text-2xl font-bold tracking-widest text-way-text"
@@ -122,8 +120,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col overflow-y-auto">
-        {/* 受ける + 投げる */}
+      <main className="flex-1 flex flex-col overflow-y-auto min-h-0">
         <section className="flex flex-col items-center gap-8 px-4 pt-10 pb-8">
           {!activeVoice && (
             <VoiceBubbles
@@ -139,7 +136,6 @@ export default function Home() {
           />
         </section>
 
-        {/* タイムライン */}
         <section className="border-t border-way-wood-light">
           <VoiceTimeline
             voices={timelineVoices}
@@ -148,6 +144,6 @@ export default function Home() {
           />
         </section>
       </main>
-    </div>
+    </>
   )
 }

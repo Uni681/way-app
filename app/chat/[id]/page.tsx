@@ -50,12 +50,17 @@ export default function ChatPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [chat, setChat] = useState<Chat | null>(null)
   const [otherCodename, setOtherCodename] = useState('')
+  const [otherUserId, setOtherUserId] = useState<string | null>(null)
   const [feed, setFeed] = useState<FeedItem[]>([])
   const [drinkItems, setDrinkItems] = useState<DrinkItem[]>([])
   const [input, setInput] = useState('')
   const [drinkBarOpen, setDrinkBarOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [stockStatus, setStockStatus] = useState<'none' | 'mine' | 'mutual'>('none')
+  const [slotsFull, setSlotsFull] = useState(false)
+  const [bookmarked, setBookmarked] = useState(false)
+  const [stocking, setStocking] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const messageIdsRef = useRef<Set<string>>(new Set())
@@ -97,6 +102,8 @@ export default function ChatPage() {
         round_trip_count: raw.round_trip_count,
         freed_at: raw.freed_at,
       })
+      const otherId = raw.user1_id === uid ? raw.user2_id : raw.user1_id
+      setOtherUserId(otherId)
       setOtherCodename(
         raw.user1_id === uid ? raw.user2.codename : raw.user1.codename
       )
@@ -267,6 +274,59 @@ export default function ChatPage() {
     setSending(false)
   }
 
+  // ── ストック状態読み込み ───────────────────────────────────────────
+  useEffect(() => {
+    if (!userId || !otherUserId) return
+    async function loadStock() {
+      const [myStockRes, theirStockRes, myMutualsRes, bookmarkRes] = await Promise.all([
+        supabase.from('stocks').select('id').eq('user_id', userId!).eq('target_user_id', otherUserId!).maybeSingle(),
+        supabase.from('stocks').select('id').eq('user_id', otherUserId!).eq('target_user_id', userId!).maybeSingle(),
+        supabase.from('stocks').select('target_user_id').eq('user_id', userId!),
+        supabase.from('bookmarks').select('id').eq('user_id', userId!).eq('target_user_id', otherUserId!).maybeSingle(),
+      ])
+
+      const iMine = !!myStockRes.data
+      const theyMine = !!theirStockRes.data
+      setStockStatus(iMine && theyMine ? 'mutual' : iMine ? 'mine' : 'none')
+      setBookmarked(!!bookmarkRes.data)
+
+      if (!iMine) {
+        // Count how many mutual stocks I have (to check if full)
+        const myStocks = myMutualsRes.data ?? []
+        const myTargetIds = myStocks.map(s => s.target_user_id)
+        if (myTargetIds.length > 0) {
+          const { data: theyStockedBack } = await supabase
+            .from('stocks')
+            .select('user_id')
+            .eq('target_user_id', userId!)
+            .in('user_id', myTargetIds)
+          const mutualCount = (theyStockedBack ?? []).length
+          setSlotsFull(mutualCount >= 5)
+        }
+      }
+    }
+    loadStock()
+  }, [userId, otherUserId])
+
+  // ── ストック操作 ─────────────────────────────────────────────────
+  async function handleStockToggle() {
+    if (stocking || !userId || !otherUserId) return
+    setStocking(true)
+
+    if (stockStatus === 'none' && !slotsFull) {
+      await supabase.from('stocks').insert({ user_id: userId, target_user_id: otherUserId })
+      setStockStatus('mine')
+    } else if (stockStatus === 'none' && slotsFull && !bookmarked) {
+      await supabase.from('bookmarks').insert({ user_id: userId, target_user_id: otherUserId })
+      setBookmarked(true)
+    } else if (stockStatus === 'none' && slotsFull && bookmarked) {
+      await supabase.from('bookmarks').delete().eq('user_id', userId).eq('target_user_id', otherUserId)
+      setBookmarked(false)
+    }
+
+    setStocking(false)
+  }
+
   // ── リアクション ─────────────────────────────────────────────────
   const handleReact = useCallback(async (messageId: string, emoji: string) => {
     if (!userId) return
@@ -311,6 +371,37 @@ export default function ChatPage() {
         <div className="flex-1 min-w-0">
           <p className="font-medium text-way-text truncate">{otherCodename}</p>
         </div>
+        {/* ストックボタン */}
+        {stockStatus === 'mutual' ? (
+          <Link
+            href={`/stocks/${otherUserId}`}
+            className="text-way-green text-lg leading-none"
+            title="ストック済み"
+          >
+            📌
+          </Link>
+        ) : stockStatus === 'mine' ? (
+          <span className="text-base leading-none opacity-50" title="相手のストック待ち">🔖</span>
+        ) : slotsFull ? (
+          <button
+            onClick={handleStockToggle}
+            disabled={stocking}
+            className={`text-base leading-none transition-opacity ${bookmarked ? 'opacity-100' : 'opacity-40'}`}
+            title={bookmarked ? '印あり' : '印をつける'}
+          >
+            🔖
+          </button>
+        ) : (
+          <button
+            onClick={handleStockToggle}
+            disabled={stocking}
+            className="w-6 h-6 rounded-full border border-way-wood text-way-muted text-xs flex items-center justify-center hover:border-way-green hover:text-way-green transition-colors"
+            title="ストックする"
+          >
+            +
+          </button>
+        )}
+
         {/* タイマー */}
         {freed ? (
           <span className="text-xs text-way-muted px-2 py-1 rounded-full border border-way-wood-light">

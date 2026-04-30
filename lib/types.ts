@@ -58,3 +58,30 @@ export type Chat = {
   round_trip_count: number
   freed_at: string | null
 }
+
+export type StockEntry = {
+  id: string
+  created_at: string
+  user_id: string
+  target_user_id: string
+}
+
+export type Bookmark = {
+  id: string
+  created_at: string
+  user_id: string
+  target_user_id: string
+}
+
+export type Encounter = {
+  id: string
+  created_at: string
+  chat_id: string
+  user1_id: string
+  user2_id: string
+  encounter_number: number
+  ended_at: string | null
+  round_trip_count: number
+  is_completed: boolean
+  memo: string | null
+}
