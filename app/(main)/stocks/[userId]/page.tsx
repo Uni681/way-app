@@ -35,9 +35,9 @@ export default function StockDetailPage() {
       const [profileRes, chatsRes] = await Promise.all([
         supabase.from('profiles').select('codename').eq('id', targetUserId).single(),
         supabase.from('chats')
-          .select('id, created_at, round_trip_count, freed_at, status, user1_id, user2_id')
+          .select('id, created_at, round_trip_count, freed_at, status, user1_id, user2_id, encounter_number')
           .or(`user1_id.eq.${uid},user2_id.eq.${uid}`)
-          .order('created_at', { ascending: true }),
+          .order('encounter_number', { ascending: true }),
       ])
 
       if (profileRes.data) setCodename(profileRes.data.codename)
@@ -47,17 +47,18 @@ export default function StockDetailPage() {
           (c.user1_id === uid && c.user2_id === targetUserId) ||
           (c.user1_id === targetUserId && c.user2_id === uid)
         )
-        .map((c, i) => ({ ...c, encounterNumber: i + 1 }))
+        .map(c => ({ ...c, encounterNumber: c.encounter_number ?? 1 }))
 
       setEncounters(pairChats)
-      if (pairChats.length >= FREED_THRESHOLD) setShowReceipt(true)
+      const maxEncounter = pairChats.length > 0 ? Math.max(...pairChats.map(c => c.encounterNumber)) : 0
+      if (maxEncounter >= FREED_THRESHOLD) setShowReceipt(true)
 
       setLoading(false)
     }
     init()
   }, [targetUserId, router])
 
-  const count = encounters.length
+  const count = encounters.length > 0 ? Math.max(...encounters.map(e => e.encounterNumber)) : 0
   const probability = Math.min(100, Math.max(15, Math.round(count / 30 * 100)))
 
   if (loading) {
