@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import type { Chat, DrinkItem, DrinkUse, Message, Reaction } from '@/lib/types'
+import { checkLayer1, LAYER1_ERROR_MESSAGE } from '@/lib/banned_words'
+import type { Chat, DrinkItem, Message, Reaction } from '@/lib/types'
 import DrinkBar from './_components/DrinkBar'
 import MessageItem from './_components/MessageItem'
+import FreedCelebration from './_components/FreedCelebration'
 
 // ── フィードアイテム型 ───────────────────────────────────────────
 type FeedMsg = { kind: 'message' } & Message
@@ -57,6 +59,8 @@ export default function ChatPage() {
   const [drinkBarOpen, setDrinkBarOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [showFreedCelebration, setShowFreedCelebration] = useState(false)
   const [stockStatus, setStockStatus] = useState<'none' | 'mine' | 'mutual'>('none')
   const [slotsFull, setSlotsFull] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
@@ -78,11 +82,11 @@ export default function ChatPage() {
       const uid = session.user.id
       setUserId(uid)
 
-      // チャット + 相手プロフィール
       const { data: chatData } = await supabase
         .from('chats')
         .select(`
-          id, user1_id, user2_id, expires_at, status, round_trip_count, freed_at,
+          id, user1_id, user2_id, expires_at, status,
+          round_trip_count, encounter_number, freed_at,
           user1:user1_id ( codename ),
           user2:user2_id ( codename )
         `)
@@ -93,22 +97,31 @@ export default function ChatPage() {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw = chatData as any
-      setChat({
+      const chatObj: Chat = {
         id: raw.id,
         user1_id: raw.user1_id,
         user2_id: raw.user2_id,
         expires_at: raw.expires_at,
         status: raw.status,
         round_trip_count: raw.round_trip_count,
+        encounter_number: raw.encounter_number ?? 1,
         freed_at: raw.freed_at,
-      })
+      }
+      setChat(chatObj)
+
       const otherId = raw.user1_id === uid ? raw.user2_id : raw.user1_id
       setOtherUserId(otherId)
-      setOtherCodename(
-        raw.user1_id === uid ? raw.user2.codename : raw.user1.codename
-      )
+      setOtherCodename(raw.user1_id === uid ? raw.user2.codename : raw.user1.codename)
 
-      // メッセージ + リアクション
+      // 30回達成オーバーレイ（初回のみ）
+      if (
+        raw.status === 'freed' &&
+        typeof window !== 'undefined' &&
+        !localStorage.getItem(`freed_seen:${chatId}`)
+      ) {
+        setShowFreedCelebration(true)
+      }
+
       const { data: msgs } = await supabase
         .from('messages')
         .select('id, sender_id, content, created_at, is_deleted, reactions(emoji, user_id)')
@@ -124,7 +137,6 @@ export default function ChatPage() {
         return { kind: 'message' as const, chat_id: chatId, ...m, reactions: r }
       })
 
-      // ドリンク使用ログ
       const { data: drinks } = await supabase
         .from('drink_bar_uses')
         .select('id, sender_id, used_at, item:item_id(id, emoji, name, key)')
@@ -135,18 +147,18 @@ export default function ChatPage() {
         kind: 'drink',
         id: d.id,
         sender_id: d.sender_id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         created_at: (d as any).used_at,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         item: (d as any).item,
       }))
 
-      // マージ + ソート
       setFeed(
         [...messages, ...drinkFeed].sort(
           (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
         )
       )
 
-      // ドリンクバーアイテム
       const { data: items } = await supabase
         .from('drink_bar_items')
         .select('*')
@@ -176,8 +188,19 @@ export default function ChatPage() {
           if (m.is_deleted) return
           messageIdsRef.current.add(m.id)
           reactionsRef.current.set(m.id, [])
-          const item: FeedMsg = { kind: 'message', ...m, reactions: [] }
-          setFeed(prev => [...prev, item])
+          setFeed(prev => [...prev, { kind: 'message', ...m, reactions: [] }])
+        }
+      )
+
+      // Layer 2 BAN: メッセージ削除フラグを受信して画面から消す
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
+        (payload) => {
+          const m = payload.new as Message & { is_deleted: boolean }
+          if (m.is_deleted) {
+            setFeed(prev => prev.filter(item => !(item.kind === 'message' && item.id === m.id)))
+          }
         }
       )
 
@@ -187,17 +210,15 @@ export default function ChatPage() {
         { event: 'INSERT', schema: 'public', table: 'drink_bar_uses', filter: `chat_id=eq.${chatId}` },
         async (payload) => {
           const d = payload.new as { id: string; sender_id: string; used_at: string; item_id: string }
-          // アイテム名称をローカルキャッシュから取得
           const item = drinkItems.find(i => i.id === d.item_id)
           if (!item) return
-          const feedItem: FeedDrink = {
+          setFeed(prev => [...prev, {
             kind: 'drink',
             id: d.id,
             sender_id: d.sender_id,
             created_at: d.used_at,
             item: { emoji: item.emoji, name: item.name, key: item.key },
-          }
-          setFeed(prev => [...prev, feedItem])
+          }])
         }
       )
 
@@ -245,15 +266,37 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [feed])
 
-  // ── 送信 ────────────────────────────────────────────────────────
+  // ── 送信（Layer 1 + Layer 2） ──────────────────────────────────
   async function handleSend() {
-    if (!input.trim() || !userId || sending) return
+    const trimmed = input.trim()
+    if (!trimmed || !userId || sending) return
+
+    // Layer 1: クライアント側キーワードチェック
+    const l1 = checkLayer1(trimmed)
+    if (l1.blocked) {
+      setSendError(LAYER1_ERROR_MESSAGE)
+      return
+    }
+    setSendError(null)
     setSending(true)
-    await supabase
+
+    const { data: inserted } = await supabase
       .from('messages')
-      .insert({ chat_id: chatId, sender_id: userId, content: input.trim() })
+      .insert({ chat_id: chatId, sender_id: userId, content: trimmed })
+      .select('id')
+      .single()
+
     setInput('')
     setSending(false)
+
+    // Layer 2: Claude API による非同期審査（fire-and-forget）
+    if (inserted) {
+      fetch('/api/moderate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: inserted.id, content: trimmed }),
+      }).catch(() => {})
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -291,17 +334,14 @@ export default function ChatPage() {
       setBookmarked(!!bookmarkRes.data)
 
       if (!iMine) {
-        // Count how many mutual stocks I have (to check if full)
-        const myStocks = myMutualsRes.data ?? []
-        const myTargetIds = myStocks.map(s => s.target_user_id)
+        const myTargetIds = (myMutualsRes.data ?? []).map(s => s.target_user_id)
         if (myTargetIds.length > 0) {
           const { data: theyStockedBack } = await supabase
             .from('stocks')
             .select('user_id')
             .eq('target_user_id', userId!)
             .in('user_id', myTargetIds)
-          const mutualCount = (theyStockedBack ?? []).length
-          setSlotsFull(mutualCount >= 5)
+          setSlotsFull((theyStockedBack ?? []).length >= 5)
         }
       }
     }
@@ -312,7 +352,6 @@ export default function ChatPage() {
   async function handleStockToggle() {
     if (stocking || !userId || !otherUserId) return
     setStocking(true)
-
     if (stockStatus === 'none' && !slotsFull) {
       await supabase.from('stocks').insert({ user_id: userId, target_user_id: otherUserId })
       setStockStatus('mine')
@@ -323,29 +362,20 @@ export default function ChatPage() {
       await supabase.from('bookmarks').delete().eq('user_id', userId).eq('target_user_id', otherUserId)
       setBookmarked(false)
     }
-
     setStocking(false)
   }
 
   // ── リアクション ─────────────────────────────────────────────────
   const handleReact = useCallback(async (messageId: string, emoji: string) => {
     if (!userId) return
-    const existing = feed.find(
-      f => f.kind === 'message' && f.id === messageId
-    ) as FeedMsg | undefined
+    const existing = feed.find(f => f.kind === 'message' && f.id === messageId) as FeedMsg | undefined
     const already = existing?.reactions.some(r => r.emoji === emoji && r.user_id === userId)
 
     if (already) {
-      await supabase
-        .from('reactions')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('user_id', userId)
-        .eq('emoji', emoji)
+      await supabase.from('reactions').delete()
+        .eq('message_id', messageId).eq('user_id', userId).eq('emoji', emoji)
     } else {
-      await supabase
-        .from('reactions')
-        .insert({ message_id: messageId, user_id: userId, emoji })
+      await supabase.from('reactions').insert({ message_id: messageId, user_id: userId, emoji })
     }
   }, [userId, feed])
 
@@ -359,25 +389,18 @@ export default function ChatPage() {
   }
 
   return (
-    <div
-      className="h-screen flex flex-col bg-way-base"
-      style={{ maxWidth: 430, margin: '0 auto' }}
-    >
+    <div className="h-dvh flex flex-col bg-way-base" style={{ maxWidth: 430, margin: '0 auto' }}>
+
       {/* ── ヘッダー ── */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-way-wood-light shrink-0">
-        <Link href="/" className="text-way-muted hover:text-way-text transition-colors text-lg">
-          ←
-        </Link>
+        <Link href="/" className="text-way-muted hover:text-way-text transition-colors text-lg">←</Link>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-way-text truncate">{otherCodename}</p>
         </div>
+
         {/* ストックボタン */}
         {stockStatus === 'mutual' ? (
-          <Link
-            href={`/stocks/${otherUserId}`}
-            className="text-way-green text-lg leading-none"
-            title="ストック済み"
-          >
+          <Link href={`/stocks/${otherUserId}`} className="text-way-green text-lg leading-none" title="ストック済み">
             📌
           </Link>
         ) : stockStatus === 'mine' ? (
@@ -388,24 +411,20 @@ export default function ChatPage() {
             disabled={stocking}
             className={`text-base leading-none transition-opacity ${bookmarked ? 'opacity-100' : 'opacity-40'}`}
             title={bookmarked ? '印あり' : '印をつける'}
-          >
-            🔖
-          </button>
+          >🔖</button>
         ) : (
           <button
             onClick={handleStockToggle}
             disabled={stocking}
             className="w-6 h-6 rounded-full border border-way-wood text-way-muted text-xs flex items-center justify-center hover:border-way-green hover:text-way-green transition-colors"
             title="ストックする"
-          >
-            +
-          </button>
+          >+</button>
         )}
 
         {/* タイマー */}
         {freed ? (
-          <span className="text-xs text-way-muted px-2 py-1 rounded-full border border-way-wood-light">
-            タイマーなし
+          <span className="text-xs text-way-green px-2 py-1 rounded-full border border-way-green/30 bg-way-green/5">
+            自由チャット
           </span>
         ) : (
           <span
@@ -421,7 +440,7 @@ export default function ChatPage() {
       </header>
 
       {/* ── メッセージ一覧 ── */}
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
         {feed.map(item => {
           if (item.kind === 'drink') {
             const isMine = item.sender_id === userId
@@ -434,7 +453,6 @@ export default function ChatPage() {
               </div>
             )
           }
-
           return (
             <MessageItem
               key={item.id}
@@ -450,36 +468,35 @@ export default function ChatPage() {
 
       {/* ── 入力欄 ── */}
       <footer className="px-4 py-3 border-t border-way-wood-light shrink-0 bg-way-base">
+        {/* Layer 1 エラー */}
+        {sendError && (
+          <p className="text-xs text-way-terracotta mb-2 px-1">{sendError}</p>
+        )}
         <div className="flex items-end gap-2">
-          {/* ドリンクバーボタン */}
           <button
             onClick={() => setDrinkBarOpen(v => !v)}
             className="w-10 h-10 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center text-lg shrink-0 hover:bg-way-wood transition-colors"
             aria-label="ドリンクバー"
-          >
-            🥤
-          </button>
+          >🥤</button>
 
-          {/* テキスト入力 */}
           <textarea
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => { setInput(e.target.value); if (sendError) setSendError(null) }}
             onKeyDown={handleKeyDown}
             placeholder="メッセージ"
             rows={1}
-            className="flex-1 px-4 py-2.5 rounded-2xl border border-way-wood bg-way-surface text-way-text text-sm placeholder-way-muted outline-none focus:border-way-green resize-none transition-colors"
+            className={`flex-1 px-4 py-2.5 rounded-2xl border bg-way-surface text-way-text text-sm placeholder-way-muted outline-none resize-none transition-colors ${
+              sendError ? 'border-way-terracotta' : 'border-way-wood focus:border-way-green'
+            }`}
             style={{ maxHeight: 120, overflowY: 'auto' }}
           />
 
-          {/* 送信ボタン */}
           <button
             onClick={handleSend}
             disabled={!input.trim() || sending}
             className="w-10 h-10 rounded-full bg-way-green flex items-center justify-center text-white shrink-0 disabled:opacity-40 transition-opacity"
             aria-label="送信"
-          >
-            ↑
-          </button>
+          >↑</button>
         </div>
       </footer>
 
@@ -490,6 +507,16 @@ export default function ChatPage() {
           onSend={handleDrinkSend}
           onClose={() => setDrinkBarOpen(false)}
           sending={sending}
+        />
+      )}
+
+      {/* ── 30回達成オーバーレイ ── */}
+      {showFreedCelebration && (
+        <FreedCelebration
+          chatId={chatId}
+          otherCodename={otherCodename}
+          encounterNumber={chat?.encounter_number ?? 30}
+          onClose={() => setShowFreedCelebration(false)}
         />
       )}
     </div>

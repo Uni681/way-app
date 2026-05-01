@@ -56,6 +56,7 @@ export type Chat = {
   expires_at: string
   status: string
   round_trip_count: number
+  encounter_number: number
   freed_at: string | null
 }
 
