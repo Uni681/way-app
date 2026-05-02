@@ -1,4 +1,4 @@
-import { stripe } from '@/lib/stripe'
+import { getStripe } from '@/lib/stripe'
 import { createClient } from '@supabase/supabase-js'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
@@ -29,6 +29,8 @@ export async function POST() {
 
     let customerId = profile?.stripe_customer_id
 
+    const stripe = getStripe()
+
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email,
@@ -47,8 +49,8 @@ export async function POST() {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: process.env.STRIPE_PRICE_ID!, quantity: 1 }],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/settings?subscribed=1`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/settings`,
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/profile?subscribed=1`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/profile`,
       locale: 'ja',
       subscription_data: {
         metadata: { supabase_user_id: user.id },
