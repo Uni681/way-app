@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import VoiceBubbles from '@/app/_components/VoiceBubbles'
 import VoiceThrow from '@/app/_components/VoiceThrow'
@@ -12,18 +13,31 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [activeVoice, setActiveVoice] = useState<Voice | null>(null)
   const [timelineVoices, setTimelineVoices] = useState<Voice[]>([])
+  const [activeChatCount, setActiveChatCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const uidRef = useRef<string | null>(null)
   const router = useRouter()
+
+  async function loadChatCount(uid: string) {
+    const { count } = await supabase
+      .from('chats')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['active', 'freed'])
+      .or(`user1_id.eq.${uid},user2_id.eq.${uid}`)
+    setActiveChatCount(count ?? 0)
+  }
 
   useEffect(() => {
     async function init() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) { router.replace('/auth'); return }
+      const uid = session.user.id
+      uidRef.current = uid
 
       const { data: prof } = await supabase
         .from('profiles')
         .select('id, codename, avatar_url, rules_accepted_at')
-        .eq('id', session.user.id)
+        .eq('id', uid)
         .single()
 
       if (!prof?.codename) { router.replace('/auth/setup'); return }
@@ -34,7 +48,7 @@ export default function Home() {
       const { data: myVoices } = await supabase
         .from('voices')
         .select('*')
-        .eq('user_id', session.user.id)
+        .eq('user_id', uid)
         .eq('status', 'waiting')
         .limit(1)
 
@@ -44,17 +58,19 @@ export default function Home() {
         .from('voices')
         .select('*')
         .eq('status', 'waiting')
-        .neq('user_id', session.user.id)
+        .neq('user_id', uid)
         .order('created_at', { ascending: false })
         .limit(30)
 
       setTimelineVoices(timeline ?? [])
+      await loadChatCount(uid)
       setLoading(false)
     }
 
     init()
   }, [router])
 
+  // 投げた声がマッチしたらチャットへ遷移
   useEffect(() => {
     if (!activeVoice) return
     const channel = supabase
@@ -70,6 +86,17 @@ export default function Home() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [activeVoice?.id, router])
+
+  // チャット数をリアルタイムで更新
+  useEffect(() => {
+    const channel = supabase
+      .channel('home-chats')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => {
+        if (uidRef.current) loadChatCount(uidRef.current)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   async function handleThrow(content: string) {
     if (!profile) return
@@ -93,7 +120,6 @@ export default function Home() {
       setTimelineVoices(prev => prev.filter(v => v.id !== voice.id))
       return
     }
-    // チャット開始通知を投げた側に送る（fire-and-forget）
     fetch('/api/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -118,6 +144,9 @@ export default function Home() {
     )
   }
 
+  // ベル無効: アクティブチャット2本埋まり
+  const chatsFull = activeChatCount >= 2
+
   const bubbleVoices = timelineVoices.slice(0, 3)
 
   return (
@@ -129,9 +158,12 @@ export default function Home() {
         >
           WAY
         </h1>
-        <div className="w-9 h-9 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center text-way-text text-sm font-medium select-none">
+        <Link
+          href="/profile"
+          className="w-9 h-9 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center text-way-text text-sm font-medium select-none hover:border-way-green transition-colors"
+        >
           {profile?.codename?.[0] ?? '?'}
-        </div>
+        </Link>
       </header>
 
       <main className="flex-1 flex flex-col overflow-y-auto min-h-0">
@@ -140,13 +172,14 @@ export default function Home() {
             <VoiceBubbles
               initialVoices={bubbleVoices}
               userId={profile!.id}
-              onReceive={handleReceive}
+              onReceive={chatsFull ? undefined : handleReceive}
             />
           )}
           <VoiceThrow
             activeVoice={activeVoice}
             onThrow={handleThrow}
             onCancel={handleCancel}
+            disabled={chatsFull}
           />
         </section>
 
@@ -154,7 +187,7 @@ export default function Home() {
           <VoiceTimeline
             voices={timelineVoices}
             onReceive={handleReceive}
-            disabled={!!activeVoice}
+            disabled={!!activeVoice || chatsFull}
           />
         </section>
       </main>

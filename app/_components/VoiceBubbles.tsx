@@ -15,7 +15,7 @@ type Slot = {
 type Props = {
   initialVoices: Voice[]
   userId: string
-  onReceive: (voice: Voice) => Promise<void>
+  onReceive?: (voice: Voice) => Promise<void>
 }
 
 // 各スロットの浮遊アニメーション設定
@@ -75,7 +75,7 @@ export default function VoiceBubbles({ initialVoices, userId, onReceive }: Props
 
   async function handleSelect(idx: number) {
     const slot = slots[idx]
-    if (!slot.voice || selecting || slots.some(s => s.visual === 'selected')) return
+    if (!slot.voice || selecting || slots.some(s => s.visual === 'selected') || !onReceive) return
 
     setSelecting(true)
 

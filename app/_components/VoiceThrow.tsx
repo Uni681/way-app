@@ -7,9 +7,10 @@ type Props = {
   activeVoice: Voice | null
   onThrow: (content: string) => Promise<void>
   onCancel: () => Promise<void>
+  disabled?: boolean
 }
 
-export default function VoiceThrow({ activeVoice, onThrow, onCancel }: Props) {
+export default function VoiceThrow({ activeVoice, onThrow, onCancel, disabled = false }: Props) {
   const [composing, setComposing] = useState(false)
   const [content, setContent] = useState('')
   const [pending, setPending] = useState(false)
@@ -54,6 +55,21 @@ export default function VoiceThrow({ activeVoice, onThrow, onCancel }: Props) {
     )
   }
 
+  // チャット満杯
+  if (disabled) {
+    return (
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-20 h-20 rounded-full bg-way-wood-light flex items-center justify-center shadow-sm opacity-40">
+          <svg width="32" height="32" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-way-muted">
+            <path d="M10 2.5a5.5 5.5 0 0 0-5.5 5.5v3.25L3 13.5h14l-1.5-2.25V8A5.5 5.5 0 0 0 10 2.5z" />
+            <path d="M8 13.5a2 2 0 0 0 4 0" />
+          </svg>
+        </div>
+        <p className="text-xs text-way-muted">チャット中はもう投げられない</p>
+      </div>
+    )
+  }
+
   // 入力中
   if (composing) {
     return (
@@ -89,14 +105,17 @@ export default function VoiceThrow({ activeVoice, onThrow, onCancel }: Props) {
     )
   }
 
-  // ベルボタン（待機なし）
+  // ベルボタン
   return (
     <button
       onClick={() => setComposing(true)}
       className="flex flex-col items-center gap-3 group"
     >
       <div className="w-20 h-20 rounded-full bg-way-green flex items-center justify-center shadow-lg group-active:scale-95 group-hover:scale-105 transition-transform duration-150">
-        <span className="text-3xl select-none">🔔</span>
+        <svg width="32" height="32" viewBox="0 0 20 20" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 2.5a5.5 5.5 0 0 0-5.5 5.5v3.25L3 13.5h14l-1.5-2.25V8A5.5 5.5 0 0 0 10 2.5z" />
+          <path d="M8 13.5a2 2 0 0 0 4 0" />
+        </svg>
       </div>
       <p className="text-xs text-way-muted">押して声を投げる</p>
     </button>
