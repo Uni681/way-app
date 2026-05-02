@@ -93,6 +93,20 @@ export default function Home() {
       setTimelineVoices(prev => prev.filter(v => v.id !== voice.id))
       return
     }
+    // チャット開始通知を投げた側に送る（fire-and-forget）
+    fetch('/api/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetUserId: voice.user_id,
+        payload: {
+          title: 'WAY',
+          body: '誰かが乗ってきた',
+          url: `/chat/${data.chat_id}`,
+          tag: `chat-start-${data.chat_id}`,
+        },
+      }),
+    }).catch(() => {})
     router.push(`/chat/${data.chat_id}`)
   }
 

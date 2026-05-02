@@ -61,6 +61,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true)
   const [sendError, setSendError] = useState<string | null>(null)
   const [showFreedCelebration, setShowFreedCelebration] = useState(false)
+  const [isSubscribed, setIsSubscribed] = useState(false)
   const [stockStatus, setStockStatus] = useState<'none' | 'mine' | 'mutual'>('none')
   const [slotsFull, setSlotsFull] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
@@ -81,6 +82,13 @@ export default function ChatPage() {
       if (!session) { router.replace('/auth'); return }
       const uid = session.user.id
       setUserId(uid)
+
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('subscription_status')
+        .eq('id', uid)
+        .single()
+      setIsSubscribed(prof?.subscription_status === 'active')
 
       const { data: chatData } = await supabase
         .from('chats')
@@ -354,7 +362,31 @@ export default function ChatPage() {
     setStocking(true)
     if (stockStatus === 'none' && !slotsFull) {
       await supabase.from('stocks').insert({ user_id: userId, target_user_id: otherUserId })
-      setStockStatus('mine')
+      // 相思相愛チェック：相手がすでにストックしているか確認
+      const { data: theirStock } = await supabase
+        .from('stocks')
+        .select('id')
+        .eq('user_id', otherUserId)
+        .eq('target_user_id', userId)
+        .maybeSingle()
+      if (theirStock) {
+        setStockStatus('mutual')
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUserId: otherUserId,
+            payload: {
+              title: 'WAY',
+              body: '相思相愛になった。ストックされた。',
+              url: `/chat/${chatId}`,
+              tag: `mutual-${chatId}`,
+            },
+          }),
+        }).catch(() => {})
+      } else {
+        setStockStatus('mine')
+      }
     } else if (stockStatus === 'none' && slotsFull && !bookmarked) {
       await supabase.from('bookmarks').insert({ user_id: userId, target_user_id: otherUserId })
       setBookmarked(true)
@@ -507,6 +539,7 @@ export default function ChatPage() {
           onSend={handleDrinkSend}
           onClose={() => setDrinkBarOpen(false)}
           sending={sending}
+          isSubscribed={isSubscribed}
         />
       )}
 

@@ -7,6 +7,7 @@ const TABS = [
   { href: '/', label: 'ホーム', icon: '🔔' },
   { href: '/stocks', label: 'ストック', icon: '🗂️' },
   { href: '/zukan', label: '図鑑', icon: '📖' },
+  { href: '/settings', label: '設定', icon: '⚙️' },
 ]
 
 export default function BottomNav() {
