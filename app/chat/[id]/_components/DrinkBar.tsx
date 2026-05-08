@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import type { DrinkItem } from '@/lib/types'
+import { LockIcon } from '@/app/_components/icons'
 
 type Props = {
   items: DrinkItem[]
@@ -104,7 +105,7 @@ function LockedButton({ item, onClick }: { item: DrinkItem; onClick: () => void 
       title="サブスクで解放"
     >
       <span className="text-2xl leading-none grayscale">{item.emoji}</span>
-      <span className="text-[10px] text-way-muted text-center leading-tight">🔒</span>
+      <LockIcon size={13} className="text-way-muted"/>
     </button>
   )
 }

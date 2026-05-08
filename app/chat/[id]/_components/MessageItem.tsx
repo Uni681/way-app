@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import type { Message } from '@/lib/types'
+import { PlusIcon } from '@/app/_components/icons'
 
 const REACTION_EMOJI = ['😂', '👍', '❤️', '🔥', '😮', '🥲', '😴', '👀']
 
@@ -133,10 +134,10 @@ export default function MessageItem({ message, isMine, userId, onReact }: Props)
           <button
             ref={btnRef}
             onClick={togglePicker}
-            className="w-6 h-6 rounded-full bg-way-wood-light text-way-muted text-xs flex items-center justify-center hover:bg-way-wood transition-colors mb-1 shrink-0"
+            className="w-6 h-6 rounded-full bg-way-wood-light text-way-muted flex items-center justify-center hover:bg-way-wood transition-colors mb-1 shrink-0"
             aria-label="リアクションを追加"
           >
-            +
+            <PlusIcon size={13} strokeWidth={2.2}/>
           </button>
         </div>
 

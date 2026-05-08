@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { BookmarkIcon } from '@/app/_components/icons'
 
 const MAX_STOCKS = 5
 
@@ -160,7 +161,7 @@ export default function StocksPage() {
                   key={b.userId}
                   className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-way-surface border border-way-wood-light"
                 >
-                  <span className="text-base">🔖</span>
+                  <BookmarkIcon size={18} className="text-way-wood shrink-0"/>
                   <span className="text-sm font-medium text-way-text">{b.codename}</span>
                 </div>
               ))}

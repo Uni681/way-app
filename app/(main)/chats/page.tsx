@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { ChatBubbleIcon } from '@/app/_components/icons'
 
 type ChatSummary = {
   id: string
@@ -110,7 +111,7 @@ export default function ChatsPage() {
           </div>
         ) : chats.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 px-8 gap-4">
-            <p className="text-4xl">💬</p>
+            <ChatBubbleIcon size={48} className="text-way-wood" strokeWidth={1.4}/>
             <p className="text-way-muted text-sm text-center">
               進行中のチャットはありません
             </p>

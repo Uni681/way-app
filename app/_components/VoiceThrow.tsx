@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { Voice } from '@/lib/types'
+import { BellIcon } from '@/app/_components/icons'
 
 type Props = {
   activeVoice: Voice | null
@@ -60,10 +61,7 @@ export default function VoiceThrow({ activeVoice, onThrow, onCancel, disabled = 
     return (
       <div className="flex flex-col items-center gap-3">
         <div className="w-20 h-20 rounded-full bg-way-wood-light flex items-center justify-center shadow-sm opacity-40">
-          <svg width="32" height="32" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-way-muted">
-            <path d="M10 2.5a5.5 5.5 0 0 0-5.5 5.5v3.25L3 13.5h14l-1.5-2.25V8A5.5 5.5 0 0 0 10 2.5z" />
-            <path d="M8 13.5a2 2 0 0 0 4 0" />
-          </svg>
+          <BellIcon size={32} className="text-way-muted"/>
         </div>
         <p className="text-xs text-way-muted">チャット中はもう投げられない</p>
       </div>
@@ -112,10 +110,7 @@ export default function VoiceThrow({ activeVoice, onThrow, onCancel, disabled = 
       className="flex flex-col items-center gap-3 group"
     >
       <div className="w-20 h-20 rounded-full bg-way-green flex items-center justify-center shadow-lg group-active:scale-95 group-hover:scale-105 transition-transform duration-150">
-        <svg width="32" height="32" viewBox="0 0 20 20" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10 2.5a5.5 5.5 0 0 0-5.5 5.5v3.25L3 13.5h14l-1.5-2.25V8A5.5 5.5 0 0 0 10 2.5z" />
-          <path d="M8 13.5a2 2 0 0 0 4 0" />
-        </svg>
+        <BellIcon size={32} className="text-white"/>
       </div>
       <p className="text-xs text-way-muted">押して声を投げる</p>
     </button>

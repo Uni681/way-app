@@ -9,6 +9,7 @@ import type { Chat, DrinkItem, Message, Reaction } from '@/lib/types'
 import DrinkBar from './_components/DrinkBar'
 import MessageItem from './_components/MessageItem'
 import FreedCelebration from './_components/FreedCelebration'
+import { BackIcon, PinIcon, BookmarkIcon, PlusIcon, DrinkIcon, SendIcon } from '@/app/_components/icons'
 
 // ── フィードアイテム型 ───────────────────────────────────────────
 type FeedMsg = { kind: 'message' } & Message
@@ -425,32 +426,40 @@ export default function ChatPage() {
 
       {/* ── ヘッダー ── */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-way-wood-light shrink-0">
-        <Link href="/" className="text-way-muted hover:text-way-text transition-colors text-lg">←</Link>
+        <Link href="/" className="text-way-muted hover:text-way-text transition-colors">
+          <BackIcon size={22}/>
+        </Link>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-way-text truncate">{otherCodename}</p>
         </div>
 
         {/* ストックボタン */}
         {stockStatus === 'mutual' ? (
-          <Link href={`/stocks/${otherUserId}`} className="text-way-green text-lg leading-none" title="ストック済み">
-            📌
+          <Link href={`/stocks/${otherUserId}`} className="text-way-green" title="ストック済み">
+            <PinIcon size={20}/>
           </Link>
         ) : stockStatus === 'mine' ? (
-          <span className="text-base leading-none opacity-50" title="相手のストック待ち">🔖</span>
+          <span className="opacity-50 text-way-muted" title="相手のストック待ち">
+            <BookmarkIcon size={20}/>
+          </span>
         ) : slotsFull ? (
           <button
             onClick={handleStockToggle}
             disabled={stocking}
-            className={`text-base leading-none transition-opacity ${bookmarked ? 'opacity-100' : 'opacity-40'}`}
+            className={`transition-opacity ${bookmarked ? 'opacity-100 text-way-green' : 'opacity-40 text-way-muted'}`}
             title={bookmarked ? '印あり' : '印をつける'}
-          >🔖</button>
+          >
+            <BookmarkIcon size={20}/>
+          </button>
         ) : (
           <button
             onClick={handleStockToggle}
             disabled={stocking}
-            className="w-6 h-6 rounded-full border border-way-wood text-way-muted text-xs flex items-center justify-center hover:border-way-green hover:text-way-green transition-colors"
+            className="w-7 h-7 rounded-full border border-way-wood text-way-muted flex items-center justify-center hover:border-way-green hover:text-way-green transition-colors"
             title="ストックする"
-          >+</button>
+          >
+            <PlusIcon size={15} strokeWidth={2.2}/>
+          </button>
         )}
 
         {/* タイマー */}
@@ -507,9 +516,11 @@ export default function ChatPage() {
         <div className="flex items-end gap-2">
           <button
             onClick={() => setDrinkBarOpen(v => !v)}
-            className="w-10 h-10 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center text-lg shrink-0 hover:bg-way-wood transition-colors"
+            className="w-10 h-10 rounded-full bg-way-wood-light border border-way-wood flex items-center justify-center shrink-0 hover:bg-way-wood transition-colors text-way-text"
             aria-label="ドリンクバー"
-          >🥤</button>
+          >
+            <DrinkIcon size={20}/>
+          </button>
 
           <textarea
             value={input}
@@ -528,7 +539,9 @@ export default function ChatPage() {
             disabled={!input.trim() || sending}
             className="w-10 h-10 rounded-full bg-way-green flex items-center justify-center text-white shrink-0 disabled:opacity-40 transition-opacity"
             aria-label="送信"
-          >↑</button>
+          >
+            <SendIcon size={20}/>
+          </button>
         </div>
       </footer>
 
