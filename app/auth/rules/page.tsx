@@ -41,7 +41,7 @@ export default function RulesPage() {
         .update({ rules_accepted_at: new Date().toISOString() })
         .eq('id', user.id)
 
-      router.push('/')
+      router.push('/tutorial')
     } finally {
       setPending(false)
     }
