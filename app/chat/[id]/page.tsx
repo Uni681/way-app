@@ -323,6 +323,10 @@ export default function ChatPage() {
     await supabase
       .from('drink_bar_uses')
       .insert({ chat_id: chatId, sender_id: userId, item_id: item.id })
+    // メロンソーダを送ったとき相手のカウンターをインクリメント
+    if (item.key === 'melon_soda' && otherUserId) {
+      await supabase.rpc('increment_melon_soda_received', { target_user_id: otherUserId })
+    }
     setSending(false)
   }
 

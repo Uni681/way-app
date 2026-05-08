@@ -61,6 +61,7 @@ function ProfileContent() {
 
   // subscription
   const [subStatus, setSubStatus] = useState<SubStatus>('none')
+  const [melonSodaReceived, setMelonSodaReceived] = useState(0)
 
   // notifications
   const [notifPrefs, setNotifPrefs] = useState<NotifPrefs>(DEFAULT_PREFS)
@@ -72,7 +73,7 @@ function ProfileContent() {
 
       const { data } = await supabase
         .from('profiles')
-        .select('codename, avatar_url, occupation, mbti, interest_1, interest_2, subscription_status, notification_prefs')
+        .select('codename, avatar_url, occupation, mbti, interest_1, interest_2, subscription_status, notification_prefs, melon_soda_received')
         .eq('id', session.user.id)
         .single()
 
@@ -85,6 +86,7 @@ function ProfileContent() {
         setInterest2(data.interest_2 ?? '')
         setSubStatus((data.subscription_status ?? 'none') as SubStatus)
         setNotifPrefs({ ...DEFAULT_PREFS, ...(data.notification_prefs ?? {}) })
+        setMelonSodaReceived(data.melon_soda_received ?? 0)
       }
       setLoading(false)
     }
@@ -338,6 +340,13 @@ function ProfileContent() {
               </div>
             )}
 
+            {/* もらったメロンソーダ */}
+            {!editing && (
+              <div className="flex items-center gap-2 border-t border-way-wood-light pt-4">
+                <MelonSodaBadge count={melonSodaReceived}/>
+              </div>
+            )}
+
             {error && <p className="text-way-terracotta text-xs">{error}</p>}
 
             {editing && (
@@ -507,6 +516,26 @@ function ProfileContent() {
         </div>
       )}
     </>
+  )
+}
+
+function MelonSodaBadge({ count }: { count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      {/* メロンソーダSVG（小） */}
+      <svg width="28" height="28" viewBox="0 0 56 56" fill="none">
+        <path d="M16 11H40L37 47H19Z" fill="#5C6E52" fillOpacity="0.14" stroke="#5C6E52" strokeWidth="2.2" strokeLinejoin="round"/>
+        <line x1="15" y1="11" x2="41" y2="11" stroke="#5C6E52" strokeWidth="2.2" strokeLinecap="round"/>
+        <line x1="35" y1="5" x2="31" y2="47" stroke="#C4A882" strokeWidth="2.8" strokeLinecap="round"/>
+        <circle cx="23" cy="27" r="2.5" fill="#5C6E52" fillOpacity="0.45"/>
+        <circle cx="27" cy="19" r="1.8" fill="#5C6E52" fillOpacity="0.35"/>
+        <circle cx="23" cy="38" r="1.4" fill="#5C6E52" fillOpacity="0.3"/>
+      </svg>
+      <div>
+        <p className="text-xs text-way-muted">もらったメロンソーダ</p>
+        <p className="text-sm font-semibold text-way-text">× {count}</p>
+      </div>
+    </div>
   )
 }
 

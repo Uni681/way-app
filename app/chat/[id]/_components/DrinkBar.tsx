@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation'
 import type { DrinkItem } from '@/lib/types'
 import { LockIcon } from '@/app/_components/icons'
+import { DrinkIllustration } from './DrinkIllustrations'
+import { playDrinkSound } from '@/lib/drinkSounds'
 
 type Props = {
   items: DrinkItem[]
@@ -82,14 +84,19 @@ function DrinkButton({
   onSend: (item: DrinkItem) => Promise<void>
   disabled: boolean
 }) {
+  function handleClick() {
+    playDrinkSound(item.key)
+    onSend(item)
+  }
+
   return (
     <button
-      onClick={() => onSend(item)}
+      onClick={handleClick}
       disabled={disabled}
-      className="flex flex-col items-center gap-1 p-2 rounded-2xl hover:bg-way-wood-light active:scale-95 transition-all disabled:opacity-40"
+      className="flex flex-col items-center gap-1.5 p-2 rounded-2xl hover:bg-way-wood-light active:scale-95 transition-all disabled:opacity-40"
       title={item.description ?? item.name}
     >
-      <span className="text-2xl leading-none">{item.emoji}</span>
+      <DrinkIllustration drinkKey={item.key} size={48}/>
       <span className="text-[10px] text-way-muted text-center leading-tight line-clamp-2">
         {item.name}
       </span>
@@ -101,10 +108,12 @@ function LockedButton({ item, onClick }: { item: DrinkItem; onClick: () => void 
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-center gap-1 p-2 rounded-2xl hover:bg-way-wood-light active:scale-95 transition-all opacity-50"
+      className="flex flex-col items-center gap-1.5 p-2 rounded-2xl hover:bg-way-wood-light active:scale-95 transition-all opacity-50"
       title="サブスクで解放"
     >
-      <span className="text-2xl leading-none grayscale">{item.emoji}</span>
+      <div className="opacity-40 grayscale">
+        <DrinkIllustration drinkKey={item.key} size={48}/>
+      </div>
       <LockIcon size={13} className="text-way-muted"/>
     </button>
   )
