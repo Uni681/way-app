@@ -256,7 +256,7 @@ export default function ZukanPage() {
 
       const { data, error } = await supabase
         .from('zukan_entries')
-        .select('tag_type, tag_value, count')
+        .select('tag_type, tag_value, "count"')
         .eq('user_id', user.id)
         .order('count', { ascending: false })
 
