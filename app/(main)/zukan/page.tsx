@@ -250,15 +250,16 @@ export default function ZukanPage() {
 
   useEffect(() => {
     async function init() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { router.replace('/auth'); return }
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) { router.replace('/auth'); return }
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('zukan_entries')
         .select('tag_type, tag_value, count')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .order('count', { ascending: false })
 
+      if (error) console.error('[zukan] fetch error:', error)
       setEntries((data ?? []) as ZukanEntry[])
       setLoading(false)
     }
