@@ -251,6 +251,7 @@ export default function ZukanPage() {
   useEffect(() => {
     async function init() {
       const { data: { user }, error: authError } = await supabase.auth.getUser()
+      console.log('[zukan] user:', user?.id, 'authError:', authError)
       if (authError || !user) { router.replace('/auth'); return }
 
       const { data, error } = await supabase
@@ -259,6 +260,7 @@ export default function ZukanPage() {
         .eq('user_id', user.id)
         .order('count', { ascending: false })
 
+      console.log('[zukan] data:', data, 'error:', error)
       if (error) console.error('[zukan] fetch error:', error)
       setEntries((data ?? []) as ZukanEntry[])
       setLoading(false)
