@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { OCCUPATIONS, MBTI_TYPES, INTERESTS } from '@/lib/tags'
@@ -13,246 +13,156 @@ type ZukanEntry = {
   count: number
 }
 
-type ColorDef = { bg: string; fg: string }
+type Tab = 'occupation' | 'mbti' | 'interest'
 
-// ── カラーマップ ─────────────────────────────────────────────────
-
-// MBTI：4グループで濃淡区別
-const MBTI_COLORS: Record<string, ColorDef> = {
-  // NT — 紫系
-  INTJ: { bg: '#3D2870', fg: '#fff' },
-  INTP: { bg: '#5B3E96', fg: '#fff' },
-  ENTJ: { bg: '#7A5BAE', fg: '#fff' },
-  ENTP: { bg: '#9E82C4', fg: '#2C2A24' },
-  // NF — 緑系
-  INFJ: { bg: '#1A5C3C', fg: '#fff' },
-  INFP: { bg: '#267A52', fg: '#fff' },
-  ENFJ: { bg: '#3EA36C', fg: '#fff' },
-  ENFP: { bg: '#68C292', fg: '#2C2A24' },
-  // SJ — 水色系
-  ISTJ: { bg: '#1F4F6A', fg: '#fff' },
-  ISFJ: { bg: '#2F6E8F', fg: '#fff' },
-  ESTJ: { bg: '#4A90AE', fg: '#fff' },
-  ESFJ: { bg: '#72B4CE', fg: '#2C2A24' },
-  // SP — 黄色系
-  ISTP: { bg: '#8C6018', fg: '#fff' },
-  ISFP: { bg: '#B07A20', fg: '#fff' },
-  ESTP: { bg: '#D4992E', fg: '#fff' },
-  ESFP: { bg: '#E8B84B', fg: '#2C2A24' },
-  '知らない・興味ない': { bg: '#7A7568', fg: '#fff' },
+interface BallState {
+  id: string
+  x: number
+  y: number
+  r: number
+  label: string
+  count: number
+  color: string
 }
 
-// 職種グループ
+// ── カラー定義 ───────────────────────────────────────────────────
+
+const MBTI_NT = new Set(['INTJ', 'INTP', 'ENTJ', 'ENTP'])
+const MBTI_NF = new Set(['INFJ', 'INFP', 'ENFJ', 'ENFP'])
+const MBTI_SJ = new Set(['ISTJ', 'ISFJ', 'ESTJ', 'ESFJ'])
+
+function mbtiColor(tag: string): string {
+  if (MBTI_NT.has(tag)) return '#8B6BAE'
+  if (MBTI_NF.has(tag)) return '#4CAF82'
+  if (MBTI_SJ.has(tag)) return '#5B9FBF'
+  if (['ISTP', 'ISFP', 'ESTP', 'ESFP'].includes(tag)) return '#D4992E'
+  return '#7A7568'
+}
+
 const OCC_MEDICAL  = new Set(['医師', '看護師', '薬剤師', '保育士'])
-const OCC_CREATIVE = new Set([
-  'デザイナー', '編集者・ライター', 'カメラマン', 'イラストレーター',
-  '音楽家', '俳優・声優', '料理人・シェフ', '美容師・スタイリスト', '建築家', 'エンジニア',
-])
-const OCC_BUSINESS = new Set([
-  '営業', 'マーケター', '不動産', '金融・投資', '起業家',
-  'フリーランス', '公務員', '弁護士', '会計士・税理士',
-])
-const OCC_EDU = new Set(['教師・講師', '研究者', '学生', '大学院生'])
+const OCC_CREATIVE = new Set(['デザイナー', '編集者・ライター', 'カメラマン', 'イラストレーター', '音楽家', '俳優・声優', '料理人・シェフ', '美容師・スタイリスト', '建築家', 'エンジニア'])
+const OCC_BUSINESS = new Set(['営業', 'マーケター', '不動産', '金融・投資', '起業家', 'フリーランス', '公務員', '弁護士', '会計士・税理士'])
+const OCC_EDU      = new Set(['教師・講師', '研究者', '学生', '大学院生'])
 
-function occupationColor(tag: string): ColorDef {
-  if (OCC_MEDICAL.has(tag))  return { bg: '#4D5E45', fg: '#fff' }   // モスグリーン
-  if (OCC_CREATIVE.has(tag)) return { bg: '#B85C38', fg: '#fff' }   // テラコッタ
-  if (OCC_BUSINESS.has(tag)) return { bg: '#8A6E50', fg: '#fff' }   // 木目
-  if (OCC_EDU.has(tag))      return { bg: '#3D7A96', fg: '#fff' }   // 水色
-  return { bg: '#7A7568', fg: '#fff' }                               // グレー
+function occupationColor(tag: string): string {
+  if (OCC_MEDICAL.has(tag))  return '#4D5E45'
+  if (OCC_CREATIVE.has(tag)) return '#B85C38'
+  if (OCC_BUSINESS.has(tag)) return '#8A6E50'
+  if (OCC_EDU.has(tag))      return '#3D7A96'
+  return '#7A7568'
 }
 
-// 趣味グループ
 const INT_ENTAME    = new Set(['映画', 'アニメ', '漫画', 'ゲーム', 'お笑い・コント', '舞台・演劇'])
 const INT_OUTDOOR   = new Set(['旅行', 'アウトドア・キャンプ', '登山・ハイキング', 'サーフィン・マリンスポーツ'])
 const INT_KNOWLEDGE = new Set(['読書', '歴史', '哲学・思想', '心理学', '科学・テクノロジー', '経済・投資', '語学', '伝統芸能'])
 const INT_SPORT     = new Set(['スポーツ（する）', 'スポーツ（見る）', '筋トレ', 'ヨガ・瞑想', 'ダンス'])
 
-function interestColor(tag: string): ColorDef {
-  if (INT_ENTAME.has(tag))    return { bg: '#6B50A0', fg: '#fff' }   // 紫
-  if (INT_OUTDOOR.has(tag))   return { bg: '#2E7848', fg: '#fff' }   // 緑
-  if (INT_KNOWLEDGE.has(tag)) return { bg: '#8A6E50', fg: '#fff' }   // 木目
-  if (INT_SPORT.has(tag))     return { bg: '#B85C38', fg: '#fff' }   // テラコッタ
-  return { bg: '#7A7568', fg: '#fff' }                               // グレー
+function interestColor(tag: string): string {
+  if (INT_ENTAME.has(tag))    return '#6B50A0'
+  if (INT_OUTDOOR.has(tag))   return '#2E7848'
+  if (INT_KNOWLEDGE.has(tag)) return '#8A6E50'
+  if (INT_SPORT.has(tag))     return '#B85C38'
+  return '#7A7568'
 }
 
-function mbtiColor(tag: string): ColorDef {
-  return MBTI_COLORS[tag] ?? { bg: '#7A7568', fg: '#fff' }
+function getColor(entry: ZukanEntry): string {
+  if (entry.tag_type === 'mbti')       return mbtiColor(entry.tag_value)
+  if (entry.tag_type === 'occupation') return occupationColor(entry.tag_value)
+  return interestColor(entry.tag_value)
 }
 
-// ── バブルアニメーション定義 ─────────────────────────────────────
+// ── ユーティリティ ───────────────────────────────────────────────
 
-const BUBBLE_SIZES = [80, 64, 52] as const
-const BUBBLE_ANIMS = [
-  'way-float-a 3.0s ease-in-out infinite',
-  'way-float-b 3.6s ease-in-out infinite',
-  'way-float-c 2.8s ease-in-out infinite',
-] as const
+// count → 半径(px)。最小20(直径40)〜最大60(直径120)
+function countToRadius(count: number, maxCount: number): number {
+  const minR = 20, maxR = 60
+  if (maxCount <= 1) return (minR + maxR) / 2
+  return minR + Math.sqrt((count - 1) / (maxCount - 1)) * (maxR - minR)
+}
 
-// ── Bubble コンポーネント ─────────────────────────────────────────
+// ── Ball コンポーネント ──────────────────────────────────────────
 
-function Bubble({
-  label,
-  count,
-  size,
-  color,
-  anim,
-}: {
-  label: string
-  count: number
-  size: number
-  color: ColorDef
-  anim: string
-}) {
-  const nameFontSize = size >= 80 ? 12 : size >= 64 ? 11 : 10
-  const countFontSize = size >= 80 ? 10 : 9
-  const maxTextWidth = Math.floor(size * 0.78)
+function Ball({ x, y, r, label, count, color }: BallState) {
+  const fontSize   = r >= 50 ? 11 : r >= 35 ? 10 : 9
+  const countSize  = r >= 40 ? 9 : 8
+  const maxW       = Math.floor(r * 1.5)
 
   return (
     <div
-      className="flex flex-col items-center justify-center shrink-0"
       style={{
-        width: size,
-        height: size,
+        position: 'absolute',
+        left: x - r,
+        top: y - r,
+        width: r * 2,
+        height: r * 2,
         borderRadius: '50%',
-        backgroundColor: color.bg,
-        animation: anim,
+        background: [
+          'radial-gradient(circle at 33% 30%, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.10) 42%, transparent 62%)',
+          color,
+        ].join(', '),
+        boxShadow: 'inset -3px -4px 10px rgba(0,0,0,0.28), 3px 5px 16px rgba(0,0,0,0.38)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        userSelect: 'none',
       }}
     >
       <span
-        className="line-clamp-2 break-all text-center leading-tight font-medium"
-        style={{ color: color.fg, fontSize: nameFontSize, maxWidth: maxTextWidth }}
+        style={{
+          color: '#fff',
+          fontSize,
+          fontWeight: 600,
+          textAlign: 'center',
+          lineHeight: 1.25,
+          maxWidth: maxW,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          wordBreak: 'break-all',
+        }}
       >
         {label}
       </span>
-      <span
-        className="mt-px"
-        style={{ color: color.fg, fontSize: countFontSize, opacity: 0.6 }}
-      >
+      <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: countSize, marginTop: 1 }}>
         {count}
       </span>
     </div>
   )
 }
 
-// ── ZukanSection ─────────────────────────────────────────────────
+// ── タブ定義 ─────────────────────────────────────────────────────
 
-function ZukanSection({
-  title,
-  entries,
-  totalCount,
-  colorFn,
-}: {
-  title: string
-  entries: ZukanEntry[]
-  totalCount: number
-  colorFn: (tag: string) => ColorDef
-}) {
-  const [expanded, setExpanded] = useState(false)
-  if (entries.length === 0) return null
-
-  const top3 = entries.slice(0, 3)
-  const rest  = entries.slice(3)
-
-  return (
-    <section>
-      {/* セクションヘッダ */}
-      <div className="flex items-center gap-2 mb-0.5">
-        <p className="text-xs font-medium text-way-muted uppercase tracking-wider">{title}</p>
-        <span className="text-xs text-way-muted">{entries.length} / {totalCount}</span>
-      </div>
-
-      {/* バブル（トップ3） */}
-      <div className="flex items-end gap-5 pt-5 pb-3 overflow-visible">
-        {top3.map((e, i) => (
-          <Bubble
-            key={e.tag_value}
-            label={e.tag_value}
-            count={e.count}
-            size={BUBBLE_SIZES[i]}
-            color={colorFn(e.tag_value)}
-            anim={BUBBLE_ANIMS[i]}
-          />
-        ))}
-      </div>
-
-      {/* 4位以下 */}
-      {rest.length > 0 && (
-        <div className="mt-0.5">
-          {expanded ? (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {rest.map(e => {
-                const c = colorFn(e.tag_value)
-                return (
-                  <span
-                    key={e.tag_value}
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-                    style={{ backgroundColor: c.bg, color: c.fg }}
-                  >
-                    {e.tag_value}
-                    <span style={{ opacity: 0.6 }}>× {e.count}</span>
-                  </span>
-                )
-              })}
-              <button
-                onClick={() => setExpanded(false)}
-                className="text-xs text-way-muted px-3 py-1 rounded-full border border-way-wood-light hover:border-way-wood transition-colors"
-              >
-                閉じる
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setExpanded(true)}
-              className="text-xs text-way-muted px-3 py-1 rounded-full border border-way-wood-light hover:border-way-wood hover:text-way-text transition-colors"
-            >
-              他{rest.length}件
-            </button>
-          )}
-        </div>
-      )}
-    </section>
-  )
-}
-
-// ── 空状態のゴーストバブル ────────────────────────────────────────
-
-function GhostBubble({
-  size,
-  color,
-  anim,
-}: {
-  size: number
-  color: string
-  anim: string
-}) {
-  return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        border: `2px dashed ${color}`,
-        backgroundColor: `${color}18`,
-        animation: anim,
-        flexShrink: 0,
-      }}
-    />
-  )
-}
+const TABS: { key: Tab; label: string; total: number }[] = [
+  { key: 'occupation', label: '職種',  total: OCCUPATIONS.length },
+  { key: 'mbti',       label: 'MBTI',  total: MBTI_TYPES.length  },
+  { key: 'interest',   label: '趣味',  total: INTERESTS.length   },
+]
 
 // ── メインページ ─────────────────────────────────────────────────
 
 export default function ZukanPage() {
   const router = useRouter()
-  const [entries, setEntries] = useState<ZukanEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const [allEntries, setAllEntries] = useState<ZukanEntry[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [tab, setTab]               = useState<Tab>('occupation')
+  const [ballStates, setBallStates] = useState<BallState[]>([])
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const engineRef    = useRef<any>(null)
+  const bodiesRef    = useRef<{ body: any; r: number; label: string; count: number; color: string; id: string }[]>([])
+  const rafRef       = useRef<number>(0)
+  const matterRef    = useRef<any>(null)
+
+  // ── データ取得 ─────────────────────────────────────────────────
 
   useEffect(() => {
     async function init() {
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
-      console.log('[zukan] user:', user?.id, 'authError:', authError)
-      if (authError || !user) { router.replace('/auth'); return }
+      const { data: { user }, error: authErr } = await supabase.auth.getUser()
+      if (authErr || !user) { router.replace('/auth'); return }
 
       const { data, error } = await supabase
         .from('zukan_entries')
@@ -260,19 +170,153 @@ export default function ZukanPage() {
         .eq('user_id', user.id)
         .order('count', { ascending: false })
 
-      console.log('[zukan] data:', data, 'error:', error)
       if (error) console.error('[zukan] fetch error:', error)
-      setEntries((data ?? []) as ZukanEntry[])
+      setAllEntries((data ?? []) as ZukanEntry[])
       setLoading(false)
     }
     init()
   }, [router])
 
-  // tag_type ごとに分離（count降順は Supabase query で保証済み）
-  const occupationEntries = entries.filter(e => e.tag_type === 'occupation')
-  const mbtiEntries       = entries.filter(e => e.tag_type === 'mbti')
-  const interestEntries   = entries.filter(e => e.tag_type === 'interest')
-  const total             = entries.length
+  // ── Matter.js CDN ロード ───────────────────────────────────────
+
+  useEffect(() => {
+    if ((window as any).Matter) {
+      matterRef.current = (window as any).Matter
+      return
+    }
+    const script = document.createElement('script')
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js'
+    script.async = true
+    script.onload = () => { matterRef.current = (window as any).Matter }
+    document.head.appendChild(script)
+    return () => { if (document.head.contains(script)) document.head.removeChild(script) }
+  }, [])
+
+  // ── 物理世界セットアップ ───────────────────────────────────────
+
+  const setupPhysics = useCallback(() => {
+    const Matter = matterRef.current
+    if (!Matter || !containerRef.current) return
+
+    const { Engine, Bodies, Composite, Body } = Matter
+    const el = containerRef.current
+    const W  = el.clientWidth
+    const H  = el.clientHeight
+
+    // 前のワールドを破棄
+    cancelAnimationFrame(rafRef.current)
+    if (engineRef.current) {
+      Composite.clear(engineRef.current.world)
+      Engine.clear(engineRef.current)
+    }
+
+    const entries = allEntries.filter(e => e.tag_type === tab)
+    if (entries.length === 0) { setBallStates([]); return }
+
+    const maxCount = Math.max(...entries.map(e => e.count))
+    const engine   = Engine.create({ gravity: { x: 0, y: 1.8 } })
+    engineRef.current = engine
+
+    // 壁・床（静的ボディ）
+    const wallOpts = { isStatic: true, restitution: 0.45, friction: 0.05 }
+    Composite.add(engine.world, [
+      Bodies.rectangle(W / 2, H + 25, W + 60, 50, wallOpts),  // 床
+      Bodies.rectangle(-25, H / 2, 50, H * 2, wallOpts),       // 左壁
+      Bodies.rectangle(W + 25, H / 2, 50, H * 2, wallOpts),    // 右壁
+    ])
+
+    // ボール生成（上から落下）
+    const items: typeof bodiesRef.current = []
+    entries.forEach((entry, i) => {
+      const r    = countToRadius(entry.count, maxCount)
+      const x    = r + 10 + Math.random() * (W - r * 2 - 20)
+      const y    = -r - i * (r * 2 + 8) - Math.random() * 40
+      const body = Bodies.circle(x, y, r, {
+        restitution: 0.5,
+        friction: 0.04,
+        frictionAir: 0.008,
+        density: 0.0018,
+      })
+      Composite.add(engine.world, body)
+      items.push({ body, r, label: entry.tag_value, count: entry.count, color: getColor(entry), id: entry.tag_value })
+    })
+    bodiesRef.current = items
+
+    // アニメーションループ
+    let last = performance.now()
+    function tick(now: number) {
+      const delta = Math.min(now - last, 32)
+      last = now
+      Engine.update(engine, delta)
+      setBallStates(items.map(it => ({
+        id:    it.id,
+        x:     it.body.position.x,
+        y:     it.body.position.y,
+        r:     it.r,
+        label: it.label,
+        count: it.count,
+        color: it.color,
+      })))
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+  }, [allEntries, tab])
+
+  // データ読み込み・タブ変更で物理世界を再構築
+  useEffect(() => {
+    if (loading) return
+    if (matterRef.current) { setupPhysics(); return }
+    // Matter.js がまだ読み込まれていない場合は待機
+    const id = setInterval(() => {
+      if (matterRef.current) { clearInterval(id); setupPhysics() }
+    }, 50)
+    return () => clearInterval(id)
+  }, [loading, tab, setupPhysics])
+
+  // アンマウント時クリーンアップ
+  useEffect(() => () => { cancelAnimationFrame(rafRef.current) }, [])
+
+  // ── タップで弾む ───────────────────────────────────────────────
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const Matter = matterRef.current
+    if (!Matter || !containerRef.current) return
+    const { Body } = Matter
+
+    const rect = containerRef.current.getBoundingClientRect()
+    const tapX = e.clientX - rect.left
+    const tapY = e.clientY - rect.top
+
+    bodiesRef.current.forEach(({ body }) => {
+      const dx   = body.position.x - tapX
+      const dy   = body.position.y - tapY
+      const dist = Math.sqrt(dx * dx + dy * dy) + 1
+      const mag  = (0.06 * body.mass) / dist
+      Body.applyForce(body, body.position, {
+        x: (dx / dist) * mag,
+        y: Math.min(-0.06 * body.mass, (dy / dist) * mag - 0.025 * body.mass),
+      })
+    })
+  }, [])
+
+  // ── ジャイロ（DeviceMotionEvent）─────────────────────────────
+
+  useEffect(() => {
+    function onMotion(e: DeviceMotionEvent) {
+      if (!engineRef.current || !e.accelerationIncludingGravity) return
+      const ax = e.accelerationIncludingGravity.x ?? 0
+      const ay = e.accelerationIncludingGravity.y ?? 0
+      engineRef.current.gravity.x = ax / 9.8
+      engineRef.current.gravity.y = Math.max(0.2, -(ay / 9.8))
+    }
+    window.addEventListener('devicemotion', onMotion)
+    return () => window.removeEventListener('devicemotion', onMotion)
+  }, [])
+
+  // ── レンダー ───────────────────────────────────────────────────
+
+  const tabMeta    = TABS.find(t => t.key === tab)!
+  const tabEntries = allEntries.filter(e => e.tag_type === tab)
 
   if (loading) {
     return (
@@ -284,66 +328,50 @@ export default function ZukanPage() {
 
   return (
     <>
-      <header className="px-4 py-3 border-b border-way-wood-light shrink-0">
-        <div className="flex items-center justify-between">
+      {/* ヘッダー */}
+      <header className="px-4 pt-3 pb-2 border-b border-way-wood-light shrink-0">
+        <div className="flex items-center justify-between mb-2">
           <h2 className="font-semibold text-way-text">人間図鑑</h2>
-          {total > 0 && <span className="text-xs text-way-muted">{total}種類</span>}
+          <span className="text-xs text-way-muted">
+            {tabEntries.length} / {tabMeta.total}種類
+          </span>
         </div>
-        <p className="text-xs text-way-muted mt-0.5">完走した会話から集まった成分</p>
+
+        {/* タブ */}
+        <div className="flex gap-1">
+          {TABS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`flex-1 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                tab === t.key
+                  ? 'bg-way-wood text-way-base'
+                  : 'text-way-muted hover:text-way-text'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 py-6 min-h-0">
-        {total === 0 ? (
-          /* ── 空の状態 ── */
-          <div className="flex flex-col items-center pt-12 pb-8 gap-10">
-            <div className="flex items-end gap-5">
-              <GhostBubble
-                size={62}
-                color="#C4A882"
-                anim="way-float-b 3.4s ease-in-out infinite"
-              />
-              <GhostBubble
-                size={80}
-                color="#5C6E52"
-                anim="way-float-a 3.0s ease-in-out infinite"
-              />
-              <GhostBubble
-                size={50}
-                color="#C4A882"
-                anim="way-float-c 3.8s ease-in-out infinite"
-              />
-            </div>
-            <div className="text-center space-y-2">
-              <p className="text-way-text text-sm font-medium">図鑑はまだ空</p>
-              <p className="text-way-muted text-xs leading-relaxed">
-                会話を完走すると<br />相手の成分が集まってくる
-              </p>
-            </div>
+      {/* 物理フィールド */}
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden min-h-0 bg-way-base"
+        onPointerDown={handlePointerDown}
+      >
+        {tabEntries.length === 0 ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <p className="text-way-text text-sm font-medium">まだ空</p>
+            <p className="text-way-muted text-xs text-center leading-relaxed">
+              会話を完走すると<br />相手の成分が集まってくる
+            </p>
           </div>
         ) : (
-          /* ── データあり ── */
-          <div className="space-y-10">
-            <ZukanSection
-              title="職種"
-              entries={occupationEntries}
-              totalCount={OCCUPATIONS.length}
-              colorFn={occupationColor}
-            />
-            <ZukanSection
-              title="MBTI"
-              entries={mbtiEntries}
-              totalCount={MBTI_TYPES.length}
-              colorFn={mbtiColor}
-            />
-            <ZukanSection
-              title="趣味"
-              entries={interestEntries}
-              totalCount={INTERESTS.length}
-              colorFn={interestColor}
-            />
-          </div>
+          ballStates.map(ball => <Ball key={ball.id} {...ball} />)
         )}
-      </main>
+      </div>
     </>
   )
 }
