@@ -39,30 +39,40 @@ function mbtiColor(tag: string): string {
   return '#7A7568'
 }
 
-const OCC_MEDICAL  = new Set(['医師', '看護師', '薬剤師', '保育士'])
-const OCC_CREATIVE = new Set(['デザイナー', '編集者・ライター', 'カメラマン', 'イラストレーター', '音楽家', '俳優・声優', '料理人・シェフ', '美容師・スタイリスト', '建築家', 'エンジニア'])
-const OCC_BUSINESS = new Set(['営業', 'マーケター', '不動産', '金融・投資', '起業家', 'フリーランス', '公務員', '弁護士', '会計士・税理士'])
-const OCC_EDU      = new Set(['教師・講師', '研究者', '学生', '大学院生'])
+// 職種カラー（ZUKAN_REDESIGN.md）
+const OCC_MEDICAL   = new Set(['医師', '看護師', '薬剤師', '保育士'])
+const OCC_CREATIVE  = new Set(['デザイナー', 'カメラマン', 'イラストレーター', '音楽家', '俳優・声優', '編集者・ライター'])
+const OCC_TECH      = new Set(['エンジニア', '研究者'])
+const OCC_BUSINESS  = new Set(['営業', 'マーケター', '金融・投資', '不動産', '起業家', 'フリーランス'])
+const OCC_EDU       = new Set(['教師・講師', '弁護士', '会計士・税理士', '公務員'])
+const OCC_LIFE      = new Set(['料理人・シェフ', '美容師・スタイリスト', '農家・漁師', '主夫・主婦'])
 
 function occupationColor(tag: string): string {
-  if (OCC_MEDICAL.has(tag))  return '#4D5E45'
-  if (OCC_CREATIVE.has(tag)) return '#B85C38'
-  if (OCC_BUSINESS.has(tag)) return '#8A6E50'
-  if (OCC_EDU.has(tag))      return '#3D7A96'
-  return '#7A7568'
+  if (OCC_MEDICAL.has(tag))  return '#5C6E52'   // モスグリーン
+  if (OCC_CREATIVE.has(tag)) return '#D85A30'   // テラコッタ
+  if (OCC_TECH.has(tag))     return '#4A8FA8'   // 青緑
+  if (OCC_BUSINESS.has(tag)) return '#C4A882'   // 木目色
+  if (OCC_EDU.has(tag))      return '#8B7BAE'   // 薄紫
+  if (OCC_LIFE.has(tag))     return '#E8A87C'   // 暖色
+  return '#8A9E7E'                               // 学生・その他
 }
 
+// 趣味カラー（ZUKAN_REDESIGN.md）
 const INT_ENTAME    = new Set(['映画', 'アニメ', '漫画', 'ゲーム', 'お笑い・コント', '舞台・演劇'])
-const INT_OUTDOOR   = new Set(['旅行', 'アウトドア・キャンプ', '登山・ハイキング', 'サーフィン・マリンスポーツ'])
-const INT_KNOWLEDGE = new Set(['読書', '歴史', '哲学・思想', '心理学', '科学・テクノロジー', '経済・投資', '語学', '伝統芸能'])
-const INT_SPORT     = new Set(['スポーツ（する）', 'スポーツ（見る）', '筋トレ', 'ヨガ・瞑想', 'ダンス'])
+const INT_MUSIC     = new Set(['音楽（聴く）', '音楽（演奏）', 'ダンス'])
+const INT_OUTDOOR   = new Set(['旅行', 'アウトドア・キャンプ', '登山・ハイキング', 'サーフィン・マリンスポーツ', 'スポーツ（する）', 'スポーツ（見る）'])
+const INT_KNOWLEDGE = new Set(['読書', '哲学・思想', '歴史', '心理学', '科学・テクノロジー', '語学', 'プログラミング'])
+const INT_LIFE      = new Set(['料理', 'お菓子作り', 'グルメ・食べ歩き', '美容・スキンケア', 'インテリア', 'ペット', 'ガーデニング'])
+const INT_CREATIVE  = new Set(['写真', 'イラスト・絵', 'DIY・ものづくり', 'ファッション'])
 
 function interestColor(tag: string): string {
-  if (INT_ENTAME.has(tag))    return '#6B50A0'
-  if (INT_OUTDOOR.has(tag))   return '#2E7848'
-  if (INT_KNOWLEDGE.has(tag)) return '#8A6E50'
-  if (INT_SPORT.has(tag))     return '#B85C38'
-  return '#7A7568'
+  if (INT_ENTAME.has(tag))    return '#8B6BAE'   // 紫
+  if (INT_MUSIC.has(tag))     return '#C4788A'   // ピンク
+  if (INT_OUTDOOR.has(tag))   return '#5C6E52'   // モスグリーン
+  if (INT_KNOWLEDGE.has(tag)) return '#4A8FA8'   // 青緑
+  if (INT_LIFE.has(tag))      return '#C4A882'   // 木目色
+  if (INT_CREATIVE.has(tag))  return '#D85A30'   // テラコッタ
+  return '#8A9E7E'                               // その他
 }
 
 function getColor(entry: ZukanEntry): string {
@@ -97,10 +107,18 @@ function Ball({ x, y, r, label, count, color }: BallState) {
         height: r * 2,
         borderRadius: '50%',
         background: [
-          'radial-gradient(circle at 33% 30%, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.10) 42%, transparent 62%)',
+          // 左上: 強い白ハイライト（ぷくぷく感）
+          'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.90) 0%, rgba(255,255,255,0.45) 25%, transparent 52%)',
+          // 下部: 暗い影色で立体感
+          `radial-gradient(circle at 60% 80%, rgba(0,0,0,0.22) 0%, transparent 55%)`,
           color,
         ].join(', '),
-        boxShadow: 'inset -3px -4px 10px rgba(0,0,0,0.28), 3px 5px 16px rgba(0,0,0,0.38)',
+        boxShadow: [
+          'inset -4px -6px 12px rgba(0,0,0,0.32)',   // 内側右下の影
+          'inset 2px 3px 6px rgba(255,255,255,0.20)', // 内側左上の光
+          '4px 8px 20px rgba(0,0,0,0.40)',            // 外側ドロップシャドウ
+          '0 2px 6px rgba(0,0,0,0.20)',               // 柔らかい底面影
+        ].join(', '),
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
