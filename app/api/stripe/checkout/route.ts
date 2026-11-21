@@ -1,35 +1,37 @@
 import { getStripe } from '@/lib/stripe'
 import { createClient } from '@supabase/supabase-js'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { authenticate } from '@/lib/api-auth'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies: { getAll: () => cookieStore.getAll() } }
-    )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const auth = await authenticate(request)
+    if (!auth) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const { user } = auth
 
     // 既存の stripe_customer_id を取得
-    const { data: profile } = await supabaseAdmin
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .select('stripe_customer_id, codename')
       .eq('id', user.id)
       .single()
 
+    if (profileError || !profile) throw new Error('profile_unavailable')
+
     let customerId = profile?.stripe_customer_id
 
     const stripe = getStripe()
+
+    if (customerId) {
+      const customer = await stripe.customers.retrieve(customerId)
+      if (customer.deleted || customer.metadata.supabase_user_id !== user.id) {
+        return Response.json({ error: 'customer_mismatch' }, { status: 409 })
+      }
+    }
 
     if (!customerId) {
       const customer = await stripe.customers.create({
@@ -41,7 +43,7 @@ export async function POST() {
       await supabaseAdmin
         .from('profiles')
         .update({ stripe_customer_id: customerId })
-        .eq('id', user.id)
+        .eq('id', user.id).throwOnError()
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -59,7 +61,6 @@ export async function POST() {
 
     return Response.json({ url: session.url })
   } catch (err) {
-    console.error('[stripe/checkout]', err)
     return Response.json({ error: 'server_error' }, { status: 500 })
   }
 }

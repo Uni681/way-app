@@ -1,5 +1,7 @@
 'use client'
 
+import { apiFetch } from '@/lib/api-fetch'
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -300,10 +302,10 @@ export default function ChatPage() {
 
     // Layer 2: Claude API による非同期審査（fire-and-forget）
     if (inserted) {
-      fetch('/api/moderate', {
+      apiFetch('/api/moderate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: inserted.id, content: trimmed }),
+        body: JSON.stringify({ messageId: inserted.id }),
       }).catch(() => {})
     }
   }
@@ -376,17 +378,11 @@ export default function ChatPage() {
         .maybeSingle()
       if (theirStock) {
         setStockStatus('mutual')
-        fetch('/api/push/send', {
+        apiFetch('/api/push/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            targetUserId: otherUserId,
-            payload: {
-              title: 'WAY',
-              body: '相思相愛になった。ストックされた。',
-              url: `/chat/${chatId}`,
-              tag: `mutual-${chatId}`,
-            },
+            chatId, event: 'mutual_stock',
           }),
         }).catch(() => {})
       } else {

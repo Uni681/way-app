@@ -1,5 +1,7 @@
 'use client'
 
+import { apiFetch } from '@/lib/api-fetch'
+
 import { useEffect } from 'react'
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -36,7 +38,7 @@ export default function PushManager() {
           applicationServerKey: urlBase64ToUint8Array(vapidKey!),
         })
 
-        await fetch('/api/push/subscribe', {
+        await apiFetch('/api/push/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(sub),

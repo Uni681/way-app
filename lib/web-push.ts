@@ -1,4 +1,5 @@
 import webpush from 'web-push'
+import { isPushEndpoint } from './api-validation'
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseAdmin = createClient(
@@ -32,13 +33,15 @@ export async function sendPushToUser(userId: string, payload: PushPayload) {
 
   await Promise.allSettled(
     subs.map(async (sub) => {
+      if (!isPushEndpoint(sub.endpoint)) return
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
           JSON.stringify(payload)
         )
-      } catch {
-        staleEndpoints.push(sub.endpoint)
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && 'statusCode' in error &&
+          [404, 410].includes(Number(error.statusCode))) staleEndpoints.push(sub.endpoint)
       }
     })
   )

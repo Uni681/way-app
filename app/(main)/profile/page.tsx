@@ -1,5 +1,7 @@
 'use client'
 
+import { apiFetch } from '@/lib/api-fetch'
+
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
@@ -179,7 +181,7 @@ function ProfileContent() {
 
   async function handleSubscribe() {
     setWorking(true)
-    const res = await fetch('/api/stripe/checkout', { method: 'POST' })
+    const res = await apiFetch('/api/stripe/checkout', { method: 'POST' })
     const { url, error } = await res.json()
     if (error || !url) { setWorking(false); return }
     window.location.href = url
@@ -187,7 +189,7 @@ function ProfileContent() {
 
   async function handlePortal() {
     setWorking(true)
-    const res = await fetch('/api/stripe/portal', { method: 'POST' })
+    const res = await apiFetch('/api/stripe/portal', { method: 'POST' })
     const { url, error } = await res.json()
     if (error || !url) { setWorking(false); return }
     window.location.href = url
@@ -200,7 +202,7 @@ function ProfileContent() {
 
   async function handleDeleteAccount() {
     setWorking(true)
-    const res = await fetch('/api/profile/delete', { method: 'DELETE' })
+    const res = await apiFetch('/api/profile/delete', { method: 'DELETE' })
     if (res.ok) {
       await supabase.auth.signOut()
       router.replace('/auth')

@@ -17,7 +17,6 @@ export async function POST(request: Request) {
   try {
     event = getStripe().webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET!)
   } catch (err) {
-    console.error('[stripe/webhook] signature verification failed', err)
     return Response.json({ error: 'invalid_signature' }, { status: 400 })
   }
 
@@ -36,6 +35,8 @@ export async function POST(request: Request) {
             stripe_subscription_id: sub.id,
           })
           .eq('id', userId)
+          .eq('stripe_customer_id', typeof sub.customer === 'string' ? sub.customer : sub.customer.id)
+          .throwOnError()
         break
       }
 
@@ -47,13 +48,14 @@ export async function POST(request: Request) {
           .from('profiles')
           .update({ subscription_status: 'cancelled', stripe_subscription_id: null })
           .eq('id', userId)
+          .eq('stripe_customer_id', typeof sub.customer === 'string' ? sub.customer : sub.customer.id)
+          .throwOnError()
         break
       }
     }
 
     return Response.json({ received: true })
   } catch (err) {
-    console.error('[stripe/webhook]', err)
     return Response.json({ error: 'handler_error' }, { status: 500 })
   }
 }
