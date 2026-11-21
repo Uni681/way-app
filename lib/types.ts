@@ -25,6 +25,8 @@ export type Message = {
   content: string
   created_at: string
   is_deleted: boolean
+  ban_check_status: string
+  moderation_state: string
   reactions: Reaction[]
 }
 

@@ -32,11 +32,11 @@ export async function POST(request: Request) {
       }
     }
     // Recipient, text and navigation are derived on the server, never supplied by the caller.
-    await sendPushToUser(target, {
+    const sent = await sendPushToUser(target, {
       title: 'WAY', body: body.event === 'chat_started' ? '誰かが乗ってきた' : '相思相愛になった。ストックされた。',
       url: `/chat/${chat.id}`, tag: `${body.event}-${chat.id}`,
-    })
-    return Response.json({ ok: true })
+    }, user.id)
+    return Response.json({ ok: true, sent })
   } catch {
     return Response.json({ error: 'server_error' }, { status: 500 })
   }

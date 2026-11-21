@@ -74,10 +74,7 @@ function ProfileContent() {
       if (!session) { router.replace('/auth'); return }
 
       const { data } = await supabase
-        .from('profiles')
-        .select('codename, avatar_url, occupation, mbti, interest_1, interest_2, subscription_status, notification_prefs, melon_soda_received')
-        .eq('id', session.user.id)
-        .single()
+        .rpc('get_my_profile')
 
       if (data) {
         setCodename(data.codename ?? '')

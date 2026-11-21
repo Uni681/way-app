@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')
 const ts = require('typescript')
-function load(file, mocks = {}) {
+function load(file, mocks = {}, env = {}) {
   const exports = {}
   const js = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
@@ -11,7 +11,7 @@ function load(file, mocks = {}) {
   vm.runInNewContext(js, { exports, require: id => {
     if (!(id in mocks)) throw new Error(`Unexpected dependency ${id}`)
     return mocks[id]
-  }, Response, Request, URL, Headers, process: { env: {} } }, { filename: file })
+  }, Response, Request, URL, Headers, process: { env } }, { filename: file })
   return exports
 }
 const validation = load('lib/api-validation.ts')
@@ -34,14 +34,22 @@ function fixture(options={}) {
   const db=client({messages: {data: options.missing ? null : message,error:options.readError},
     chats:{data:options.noChat ? null : {user1_id:uid,user2_id:mid,...options.chat},error:null}},reads)
   const admin=client({messages:{data:options.conflict ? null : {id:mid},error:options.writeError}},writes)
+  admin.rpc = async (name, args) => {
+    if (name === 'claim_moderation') return { data: options.noClaim ? [] : [{message_id:mid,content:message.content,lease_token:'lease'}], error:options.claimError }
+    writes.push({name,args})
+    return {data:!options.conflict,error:options.writeError}
+  }
+  const providerMocks = {
+    '@supabase/supabase-js':{createClient:()=>admin},
+    '@anthropic-ai/sdk':class { messages={create:async args=>{
+      ai.push(args); if(options.timeout) throw {name:'APIConnectionTimeoutError'}; if(options.aiError) throw new Error('private provider detail')
+      return {content:options.empty ? [] : [{type:'text',text:options.verdict ?? 'SAFE'}]}
+    }}},
+  }
   const route=load('app/api/moderate/route.ts', {
     '@/lib/api-auth':{authenticate:async()=>options.unauthorized ? null : {user:{id:uid},supabase:db}},
     '@/lib/api-validation':validation,
-    '@supabase/supabase-js':{createClient:()=>admin},
-    '@anthropic-ai/sdk':class { messages={create:async args=>{
-      ai.push(args); if(options.aiError) throw new Error('private provider detail')
-      return {content:options.empty ? [] : [{type:'text',text:options.verdict ?? 'SAFE'}]}
-    }}},
+    '@/lib/moderation':load('lib/moderation.ts', providerMocks),
   })
   return {reads,writes,ai, post: body=>route.POST(new Request('https://test/api/moderate',{
     method:'POST',body:typeof body==='string' ? body : JSON.stringify(body ?? {messageId:mid,content:'forged text'}),
@@ -62,10 +70,10 @@ for(const body of ['{', 'null', '{}', '{"messageId":{}}', '{"messageId":"x),id.n
 for(const verdict of ['SAFE','FLAGGED']) test(`moderate ${verdict} uses stored text and constrained update`,async()=>{
  const f=fixture({verdict});const res=await f.post();assert.equal(res.status,200)
  assert.equal(f.ai[0].messages[0].content,'stored text')
- const filters=f.writes[0].filters
- for(const pair of [['id',mid],['sender_id',uid],['chat_id',mid],['content','stored text'],['is_deleted',false],['ban_check_status','pending']]) {
-  assert.ok(filters.some(x=>x[0]==='eq' && x[1]===pair[0] && x[2]===pair[1]))
- }
+ assert.equal(f.writes[0].name,'finish_moderation')
+ assert.equal(f.writes[0].args.p_message_id,mid)
+ assert.equal(f.writes[0].args.p_lease_token,'lease')
+ assert.equal(f.writes[0].args.p_verdict,verdict)
  assert.equal((await res.json()).flagged,verdict==='FLAGGED')
 })
 for(const [opts,status] of [[{verdict:'probably safe'},502],[{empty:true},502],[{aiError:true},503],[{writeError:{}},503],[{conflict:true},409]]) {
@@ -123,4 +131,69 @@ test('timer endpoint rejects missing cron configuration',async()=>{
  let calls=0
  const route=load('app/api/push/timer-check/route.ts',{'@supabase/supabase-js':{createClient:()=>({rpc:async()=>{calls++}})},'@/lib/web-push':{}})
  assert.equal((await route.POST(new Request('https://test',{method:'POST'}))).status,403);assert.equal(calls,0)
+})
+
+for(const opts of [{noClaim:true},{claimError:{}}]) test('no AI without successful DB claim '+JSON.stringify(opts),async()=>{
+ const f=fixture(opts);assert.equal((await f.post()).status,opts.noClaim?409:503);assert.equal(f.ai.length,0);assert.equal(f.writes.length,0)
+})
+test('provider failure schedules retry with the same lease, never SAFE',async()=>{
+ const f=fixture({aiError:true});await f.post();assert.equal(f.writes[0].args.p_verdict,'ERROR');assert.equal(f.writes[0].args.p_lease_token,'lease')
+})
+test('scheduled worker authenticates before touching queue',async()=>{
+ let calls=0
+ const route=load('app/api/moderation/worker/route.ts',{'@/lib/moderation':{processModeration:async()=>{calls++;return new Response(null,{status:409})}}},{CRON_SECRET:'test-secret'})
+ assert.equal((await route.POST(new Request('https://test',{method:'POST'}))).status,403);assert.equal(calls,0)
+ assert.equal((await route.POST(new Request('https://test',{method:'POST',headers:{'x-cron-secret':'test-secret'},body:JSON.stringify({messageId:'attacker'})}))).status,200);assert.equal(calls,1)
+})
+test('worker limits batch and surfaces retry outcomes',async()=>{
+ let calls=0
+ const route=load('app/api/moderation/worker/route.ts',{'@/lib/moderation':{processModeration:async id=>{assert.equal(id,undefined);calls++;return new Response(null,{status:503})}}},{CRON_SECRET:'test-secret'})
+ assert.equal((await route.POST(new Request('https://test',{method:'POST',headers:{'x-cron-secret':'test-secret'}}))).status,503);assert.equal(calls,3)
+})
+test('UI visibility and pending labels fail closed',()=>{
+ const {canDisplayMessage,moderationLabel}=load('lib/message-visibility.ts')
+ for(const state of ['queued','retry','held','processing']) {
+  assert.equal(canDisplayMessage({sender_id:mid,ban_check_status:'pending',is_deleted:false},uid),false)
+  assert.ok(moderationLabel(state,'pending').includes('未送信'))
+ }
+ assert.equal(canDisplayMessage({sender_id:uid,ban_check_status:'pending',is_deleted:false},uid),true)
+ assert.equal(canDisplayMessage({sender_id:mid,ban_check_status:'passed',is_deleted:false},uid),true)
+ assert.equal(canDisplayMessage({sender_id:uid,ban_check_status:'flagged',is_deleted:true},uid),false)
+})
+
+function pushFixture(options={}) {
+ const calls={sent:0,reserved:0,finished:[],deleted:[]}
+ let occupied=false
+ const chain={select:()=>chain,eq:(...args)=>{calls.deleted.push(args);return chain},limit:async()=>({data:[{endpoint:'https://fcm.googleapis.com/fcm/send/test',auth:'a',p256dh:'b'}]}),delete:()=>chain,then:resolve=>resolve({})}
+ const api=load('lib/web-push.ts',{
+  './api-validation':validation,
+  '@supabase/supabase-js':{createClient:()=>({from:()=>chain,rpc:async(name,args)=>{
+   if(name==='reserve_push') {
+    calls.reserved++;if(options.reserveError) return {error:{}}
+    if(occupied) return {data:null}
+    occupied=true;return {data:'delivery-id'}
+   }
+   calls.finished.push(args.p_outcome);return {}
+  }})},
+  'web-push':{setVapidDetails:()=>{},sendNotification:async()=>{
+   calls.sent++;if(options.sendError) throw {statusCode:options.statusCode ?? 503}
+  }},
+ })
+ return {calls,send:()=>api.sendPushToUser(mid,{title:'WAY',body:'fixed',tag:`chat_started-${mid}`},uid)}
+}
+test('concurrent push requests only reach provider after one durable reservation',async()=>{
+ const f=pushFixture();const results=await Promise.all([f.send(),f.send()]);assert.equal(f.calls.sent,1);assert.equal(results.filter(Boolean).length,1)
+})
+test('push quota/storage failure prevents network calls',async()=>{
+ const f=pushFixture({reserveError:true});await assert.rejects(f.send());assert.equal(f.calls.sent,0)
+})
+test('ambiguous provider failure is recorded, never automatically replayed',async()=>{
+ const f=pushFixture({sendError:true});await assert.rejects(f.send());assert.equal(await f.send(),false);assert.equal(f.calls.sent,1);assert.ok(f.calls.finished.includes('failed'))
+})
+test('only terminal subscription failures remove the matching recipient endpoint',async()=>{
+ const f=pushFixture({sendError:true,statusCode:410});await assert.rejects(f.send());assert.ok(f.calls.deleted.some(x=>x[0]==='user_id'&&x[1]===mid));assert.ok(f.calls.deleted.some(x=>x[0]==='endpoint'))
+})
+
+test('ambiguous AI timeout is held rather than retried',async()=>{
+ const f=fixture({timeout:true});assert.equal((await f.post()).status,503);assert.equal(f.writes[0].args.p_verdict,'HOLD')
 })

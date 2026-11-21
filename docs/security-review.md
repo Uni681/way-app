@@ -1,66 +1,78 @@
-# セキュリティ監査とレビュー手順
+# WAY セキュリティ監査記録
 
-監査日: 2026-11-22。基点: `4b9439ec6e5a7ad68bda709c6210d4862fa3e9ca`。
-対象: 全8 APIルート、呼び出し元、Supabase schema / 番号付きmigration、service-role利用、依存関係。実環境の設定やログ・秘密値は取得していない。
+更新: 2026-11-22。PR #1 / `security/api-authorization-review`。
+初回監査基点 `4b9439ec6e5a7ad68bda709c6210d4862fa3e9ca`、追加修正基点 `e2b9febf12bf5dd788c8a5356e631c07fe6a8887`。
+対象はリポジトリのAPI・呼び出し元・スキーマ・SQL権限・依存関係。実Supabaseの設定や秘密値は取得・変更していない。本番デプロイ・mainへのマージはしていない。
 
-## 主な指摘と修正
+## 解消した主な問題
 
-| 重要度 | 問題 | この変更 |
-| --- | --- | --- |
-| 重大 | moderateが未認証で任意IDと任意本文を受け取り、管理権限で審査状態・削除フラグを変更 | 検証済みBearer認証、RLS下での取得、投稿者と参加者の両方を確認。本文はDBから読み、更新対象・本文・pending状態を再照合。管理権限は最終更新のみ |
-| 重大 | profilesの行所有チェックだけでは課金・BAN・Stripe IDの自己変更を防げない | 009でINSERT/UPDATE列を許可リスト化。Stripe ID・BAN理由の一般SELECTも撤回。過去に改ざんされたStripe IDを信用せず、Stripe側の所有者metadataをcheckout/portalで照合 |
-| 高 | 内部SECURITY DEFINER関数にPUBLIC EXECUTEが残る | 図鑑更新・タイマー検索/更新・トリガー関数の一般実行を撤回。タイマーはservice_roleのみ |
-| 高 | reactions / drink_bar_usesに参加権限チェックがない | 009で参加者を検証。ドリンクは期限・有効商品・課金状態も検証 |
-| 高 | メッセージINSERTで審査状態を指定でき、期限切れへの投稿も可能 | 列権限とRLSで制限。自由チャットは期限に依存せず投稿可能 |
-| 高 | Pushの任意通知内容・任意URL、target IDのフィルター文字列への埋め込み | chat IDとイベントのみ受付。RLS＋参加者確認後、相手・文面・URLをサーバーで決定。相思相愛は双方向ストックを確認 |
-| 高 | Push購読の管理権限upsertで他人のendpoint所有者を変更可能。任意宛先へのサーバー通信 | ユーザー権限のRLSで保存。登録時と送信時の双方で既知のPush配信ホストだけを許可。保存エラーを成功扱いしない |
-| 高 | 既知の依存脆弱性 | Next.js 16.4.6と修正版の間接依存に更新。lockfile更新後のnpm auditは0件 |
-| 中 | ブラウザーのlocalStorage認証とAPIのCookie認証が不一致 | 全ユーザー向けAPIと呼び出し元をBearer方式へ統一。サーバーはgetUserで検証 |
-| 中 | AI/DB失敗を「安全」と返す、例外に機密データが含まれる可能性 | 失敗は502/503等の明示的エラー。生のSDK例外をログ出力しない。WebhookのDBエラーも再送可能な500にする |
+| リスク | 修正 |
+| --- | --- |
+| 未認証moderateから任意メッセージを管理更新 | getUserで検証した本人認証、投稿者とチャット参加確認。本文はDBから取得 |
+| ブラウザーが審査を省略できる | messages INSERTと同じトランザクションで必須キューへ登録。サーバー定期処理が取得。通常の画面から審査API呼び出しを削除 |
+| 審査前・失敗本文の相手への露出 | restrictive SELECT policyで相手にはpassedかつ非削除だけを公開。送信者には状態を表示。Realtimeも再取得し、ポーリングで取りこぼしを回復 |
+| 同一投稿への並行AI呼び出し | 行ロック・SKIP LOCKEDで一度だけclaim。トークン付きleaseと状態照合で古い結果を拒否 |
+| AI失敗を安全と扱う | 確定した失敗は30秒・60秒後に再試行、最大3試行でheld。通信切断・タイムアウトや期限切れleaseは即held。SAFE/FLAGGED以外を承認しない |
+| 未審査投稿で会話回数/図鑑を増やせる | 承認遷移時だけ一度カウント。チャット行ロックで直列化。過去分の再審査による二重カウントも防止 |
+| Pushの連打・重複 | 送信前に宛先＋イベントの一意レコードを予約。失敗・結果不明でも自動再送しない。分/時間の共有DB上限を追加 |
+| 任意Push宛先・URL・文面、購読所有者上書き | サーバーで文面・相手・URLを決定。購読は本人RLSで登録。配信ホスト許可リスト、DBで登録上限と形式検証 |
+| 課金/BAN/Stripe IDの自己変更 | 009で書込列を制限。Stripe側顧客metadataとの所有者照合、Webhookで顧客ID照合 |
+| プロフィールの非公開情報を他人が読める | 012で既存の列SELECT権限も撤回。認証済み公開情報はid/codename/avatar_urlのみ。本人情報は引数のないget_my_profile RPCでauth.uid()に限定 |
+| SECURITY DEFINER内部関数の一般公開 | 内部関数は一般実行権を撤回。追加関数は固定search_path、キュー操作・配信予約はservice_roleのみ |
+| voiceの期限/状態/チャットID偽装、期限切れ/BANユーザーとのマッチ | 書込列を制限。キャンセルは本人のwaiting→expiredのみ。RPCで期限・双方のBAN・同一ペアの並行作成を検証 |
+| 図鑑・メロンソーダ数の偽装 | 図鑑の直接書込とカウンターRPCを撤回。カウンターは参加権限が確認されたドリンクINSERTトリガーで更新 |
+| 無関係なチャットへの投稿・リアクション・通報など | 参加者、期限、有効商品、購読状態、承認済みメッセージ、通報対象の整合性、ストック/ブックマークの出会いを検証 |
+| BANがユーザー投稿を止めない | voices/messages/reactions/drinks/stocks/bookmarks/reports/zukan/push subscriptionsにrestrictive active-account policy |
+| 既知の依存脆弱性 | Next.js 16.4.6等へ更新。初回修正時のnpm auditは0件 |
 
-APIの返却値やUIの非表示だけではデータ保護にならない。SQLの009も適用して初めて列権限・DB関数の修正が有効になる。
+## 審査の状態と保証範囲
 
-## APIごとの確認範囲
+`queued → processing → done`。SAFEだけが相手に見える。FLAGGEDは削除フラグを付ける。
+確定した失敗は`retry → processing`、3試行で`held`。曖昧な通信結果と2分のlease期限超過は`held`にする。保留解除は管理者用RPCだけに許可し、ブラウザーからはできない。
 
-- `/api/moderate`: 自分が投稿した参加チャット内のpendingメッセージのみ。削除済み・処理済みは409。更新競合も409。AI出力はSAFE/FLAGGEDだけを受理。
-- `/api/profile/delete`: 検証した本人IDだけをAuth管理APIへ渡す。チャット等の外部キーで退会処理が失敗する可能性は別途実環境で確認が必要。
-- `/api/push/send`: 有効な参加チャットとイベントを確認。chat_startedは参加を開始した側（user2）のみ。
-- `/api/push/subscribe`: 本人のRLSで保存。配信ホスト許可リスト外のブラウザー/サービスは拒否するため、対応範囲追加時に検証が必要。
-- `/api/push/timer-check`: 設定済みCRON_SECRETの一致が必要。設定欠落は拒否。
-- `/api/stripe/checkout`, `/portal`: 本人認証とStripe顧客所有者の照合。古い顧客にmetadataがなければ409となるため、運用者による照合が必要。
-- `/api/stripe/webhook`: 署名を検証し、顧客IDとユーザーIDの両方で更新対象を絞る。DBエラーは500。
+`/api/moderate`は旧クライアント向けの任意の高速化経路として残すが、定期ワーカーと同じDB claimを使う。必須処理はこれに依存しない。ワーカー・API・DBの障害時も相手には未承認本文を表示しない。
 
-## 検証
+外部AIの実行を分散システム全体で「厳密に一度だけ」と保証するものではない。通信断後にプロバイダーが処理を続けている可能性があるため、自動再取得しない設計にした。管理者がその状態を確認せず手動再試行すれば、外部での再実行は起こり得る。失敗したネットワーク要求をAPI側で自動リトライしない（SDK maxRetries=0、timeout=15秒）。
 
-`npm test`: 34件成功。APIテストは実ルートをTypeScriptから変換してSDKを置換し、不正要求でAIや管理更新に到達しないことを検証する。外部サービスの実通信テストではない。
+通知も同様に「一意イベントにつき一度の送信試行」を選ぶ。配信後のDB記録失敗やプロセス停止でも予約を消さないため、重複を避ける代わりに未達の可能性がある。端末や配信事業者内部の再配信まで保証しない。
 
-DBテストはPGliteのPostgreSQLでschema、001・003〜009を実行し、authenticated/anonロールへ切り替えて権限拒否と正常系を確認する。Supabase Authはauth.uid()のテスト用実装を使う。uuid-ossp拡張とRealtime publication（002）はこのテストでは実行しない。Supabase本体、Storage、Realtimeの統合検証を代替するものではない。
+## 頻度制限（固定時間窓）
 
-`npm run typecheck`: 成功。`npm run build -- --webpack`: ダミー環境変数で成功（21ページ生成）。通常のTurbopackビルドは、この実行環境のポート作成制限で失敗。初回はGoogle Fontsの取得制限でも失敗した。標準ビルドの実環境での再確認は必要。
+| 対象 | 制限 |
+| --- | --- |
+| 新規メッセージ | ユーザーごと10件/分、100件/時 |
+| AI claim（再試行を含む） | 全体60件/分、1メッセージ最大3試行 |
+| Push予約 | 全体120イベント/分、宛先ごと10/分、操作ユーザーごと10/分・100/時 |
+| 保存Push購読 | 1ユーザー最大3件、登録/更新5回/分 |
+| voice | 3件/分、30件/時 |
+| マッチング | 操作ユーザーごと5回/分 |
+| ドリンク | 10件/分 |
 
-008はschemaに既にある同名ポリシーで失敗するため、再作成前にdrop if existsを追加した。既存DBへ過去migrationを再実行する指示ではない。
+DBトランザクション内で共有カウンターを更新するため、複数のアプリプロセスやData APIからも制限が働く。境界をまたぐバーストは最大2窓分起こり得る。件数はプロトタイプ向け初期値であり、運用の計測に基づく調整が必要。
 
-## 残る課題・公開運用前の条件
+## 回帰テストと限界
 
-1. **必須審査と頻度制限**: 現状の審査はブラウザーの任意呼び出しで省略でき、pending本文も参加者に読める。同一pendingメッセージの並行要求は複数回AI課金を発生させ得る。サーバーキューで一意にclaimし、審査済みのみ配信する設計が必要。失敗時の再試行・保留表示も必要。今回の修正を「全投稿の安全審査保証」と説明しない。
-2. **通知の重複と濫用**: 有効な相手への同一イベント連打は未制限。ユーザー/イベント別のDB一意キー、送信頻度制限、通知設定・ミュート反映を追加する。timerの一括処理にもclaimと失敗再試行が必要。
-3. **その他DB仕様**: voicesの変更可能列、match_voiceの期限・BAN検証、reportsの対象整合性、図鑑の自己更新、メロンソーダRPCの連打を改善する。マッチングRPCに期限/BAN検証を加え、カウンターはドリンクINSERTトリガーに移し、クライアント直接更新を禁止する案を推奨。現在の公開プロフィール列には通知設定や購読状態が含まれるため、公開プロフィールと本人専用情報の分離も必要。
-4. **Stripe整合性**: checkout並行作成の冪等性、Webhook順序逆転・重複、存在しないユーザー/顧客による0行更新の扱いを追加検証する。既存の不正な課金フラグがあれば、Stripeを正として照合する。自動一括修復は行っていない。
-5. **運用設定**: 実Supabaseのpolicy・列grant・RPC grantがコードと一致するか、Storageのavatars所有者制限、Auth/メール設定、ログの保管範囲を確認する。Git履歴全体を対象とした専門的な秘密情報検査は今回の範囲外。
-6. **仕様と実装差**: 期限切れのデータ削除、アカウントBAN、人間による異議申し立て対応等は別途実装・運用検証が必要。
+- 既存34件を維持し、APIの審査更新テストはトークン付きRPCへ更新。
+- API単体テストは実ルート/共通処理を変換し、SDKを置換。外部APIは呼ばない。
+- 初回009までのDBテストに加え、schema→001・003〜012をPGliteのPostgreSQLで適用し、authenticated/anon/service_roleを切り替えて拒否と正常系を検証。
+- 新規DBテストは、隠された本文、claim重複、古いtoken、再試行・保留、履歴再審査、承認時カウント、頻度制限、プロフィール、BAN、voice、通報、ドリンク、購読をカバー。
+- 同時Push呼び出しで配信処理が1回だけになるテストも追加。DBテストは単一PGliteインスタンスであり、実PostgreSQLの複数接続負荷試験を代替しない。
+- Supabase Authはテスト用auth.uid()を使用。uuid-ossp、Realtime publication（002）、pg_cron/pg_net/Vaultと実HTTPの連携はこのテストでは実行していない。
+- 実環境のPostgREST・Realtimeの権限挙動、複数端末の画面、実AI/Push/Stripe疎通はステージングで別途必須。
 
-## 安全な導入順序
+最終結果は61件成功（既存34件を含む）、型チェック成功、`npm run build -- --webpack`成功（22ページ生成）。通常のTurbopackビルドは実行環境のポート作成制限により失敗。ビルドはダミー環境変数を使用し、本番DB・外部AI・決済APIには接続していない。
 
-1. まずこのPRのAPI変更、009の列grant/関数grant、READMEの説明をレビューする。自動デプロイやDB変更はこの作業から実行しない。
-2. 独立した検証環境で実環境と同じスキーマ・権限を再現し、009を適用。未知の既存ポリシー・列単位grantがあれば別途確認する。今回のテストはリポジトリ上の設定が前提。
-3. 未認証、本人、相手、第三者の4通りでAPIと直接Data APIを確認。課金列のINSERT/UPDATE拒否、内部RPC拒否、審査エラー、期限切れ/freeチャット、既存ログインからのBearer送信を確認する。
-4. Stripeテストモード、複数ブラウザーPush、実AIとの疎通を確認。秘密値・メッセージ本文をテストログに出さない。
-5. APIとクライアントを同時に切り替える。旧クライアントのCookieのみのAPI要求は401となるため、再読み込み案内が必要。審査更新の一部だけを戻して未認証管理APIを再公開しない。
+## 本番前の条件と残課題
 
-本番変更は別途、レビューと検証結果を確認したうえで判断する。
+[適用・監視手順](security-rollout.md)に沿って検証環境で確認する。010は過去の非削除passedも再審査へ戻すため、相手から一時的に見えなくなり、バックログとAI費用が発生する。履歴のサイズを確認せず適用しない。
 
-## 参考資料
+残る項目は、実環境のRLS/grant差分・Storage/avatar権限・Auth設定の照合、スケジューラー接続と監視、実サービス連携、既存の課金/集計値の照合。新しい制限は過去の改ざん済みデータを自動修復しない。StripeのWebhook順序/重複・checkout冪等性、退会時の外部キー処理、通知設定/ミュートの完全反映、データ保持と削除も引き続き確認が必要。
+
+必須AI審査の対象はmessagesであり、公開タイムラインのvoicesやプロフィール等まで含む全コンテンツ審査ではない。AI判定自体の誤判定・プロンプトインジェクションへの評価、人による異議申立て対応も別途必要。大量アカウント作成に対するAuth側の制限や、総費用上限・滞留件数監視を運用で設定する。
+
+## 参考
 
 - [Supabase RLS](https://supabase.com/docs/guides/database/postgres/row-level-security)
-- [Supabase getUser](https://supabase.com/docs/reference/javascript/auth-getuser)
-- Next.jsの同梱Route Handlersドキュメント（`node_modules/next/dist/docs/`）。
+- [Supabase 列権限](https://supabase.com/docs/guides/database/postgres/column-level-security)
+- [Supabase 定期HTTP処理とVault](https://supabase.com/docs/guides/functions/schedule-functions)
+- Next.js同梱Route Handlersドキュメント（node_modules/next/dist/docs）。

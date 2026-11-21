@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import type { Message } from '@/lib/types'
+import { moderationLabel } from '@/lib/message-visibility'
 import { PlusIcon } from '@/app/_components/icons'
 
 const REACTION_EMOJI = ['😂', '👍', '❤️', '🔥', '😮', '🥲', '😴', '👀']
@@ -132,6 +133,7 @@ export default function MessageItem({ message, isMine, userId, onReact }: Props)
 
           {/* リアクション追加ボタン */}
           <button
+            disabled={message.ban_check_status !== 'passed'}
             ref={btnRef}
             onClick={togglePicker}
             className="w-6 h-6 rounded-full bg-way-wood-light text-way-muted flex items-center justify-center hover:bg-way-wood transition-colors mb-1 shrink-0"
@@ -141,6 +143,9 @@ export default function MessageItem({ message, isMine, userId, onReact }: Props)
           </button>
         </div>
 
+        {isMine && message.ban_check_status !== 'passed' && (
+          <p className="text-xs text-way-muted" role="status">{moderationLabel(message.moderation_state, message.ban_check_status)}</p>
+        )}
         {/* リアクション表示 */}
         {Object.keys(reactionMap).length > 0 && (
           <div className={`flex gap-1 flex-wrap ${isMine ? 'justify-end' : 'justify-start'}`}>

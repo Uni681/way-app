@@ -37,10 +37,7 @@ export default function Home() {
       uidRef.current = uid
 
       const { data: prof } = await supabase
-        .from('profiles')
-        .select('id, codename, avatar_url, rules_accepted_at')
-        .eq('id', uid)
-        .single()
+        .rpc('get_my_profile')
 
       if (!prof?.codename) { router.replace('/auth/setup'); return }
       if (!prof.rules_accepted_at) { router.replace('/auth/rules'); return }
