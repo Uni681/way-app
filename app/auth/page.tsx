@@ -41,10 +41,7 @@ export default function AuthPage() {
         if (error) throw error
 
         const { data: profile } = await supabase
-          .from('profiles')
-          .select('codename, rules_accepted_at')
-          .eq('id', data.user.id)
-          .single()
+          .rpc('get_my_profile')
 
         if (!profile?.codename) {
           router.push('/auth/setup')

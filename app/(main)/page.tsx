@@ -1,5 +1,7 @@
 'use client'
 
+import { apiFetch } from '@/lib/api-fetch'
+
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -35,10 +37,7 @@ export default function Home() {
       uidRef.current = uid
 
       const { data: prof } = await supabase
-        .from('profiles')
-        .select('id, codename, avatar_url, rules_accepted_at')
-        .eq('id', uid)
-        .single()
+        .rpc('get_my_profile')
 
       if (!prof?.codename) { router.replace('/auth/setup'); return }
       if (!prof.rules_accepted_at) { router.replace('/auth/rules'); return }
@@ -120,17 +119,11 @@ export default function Home() {
       setTimelineVoices(prev => prev.filter(v => v.id !== voice.id))
       return
     }
-    fetch('/api/push/send', {
+    apiFetch('/api/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        targetUserId: voice.user_id,
-        payload: {
-          title: 'WAY',
-          body: '誰かが乗ってきた',
-          url: `/chat/${data.chat_id}`,
-          tag: `chat-start-${data.chat_id}`,
-        },
+        chatId: data.chat_id, event: 'chat_started',
       }),
     }).catch(() => {})
     router.push(`/chat/${data.chat_id}`)

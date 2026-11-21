@@ -1,5 +1,8 @@
 'use client'
 
+import { canDisplayMessage } from '@/lib/message-visibility'
+import { apiFetch } from '@/lib/api-fetch'
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -85,10 +88,7 @@ export default function ChatPage() {
       setUserId(uid)
 
       const { data: prof } = await supabase
-        .from('profiles')
-        .select('subscription_status')
-        .eq('id', uid)
-        .single()
+        .rpc('get_my_profile')
       setIsSubscribed(prof?.subscription_status === 'active')
 
       const { data: chatData } = await supabase
@@ -133,12 +133,12 @@ export default function ChatPage() {
 
       const { data: msgs } = await supabase
         .from('messages')
-        .select('id, sender_id, content, created_at, is_deleted, reactions(emoji, user_id)')
+        .select('id, sender_id, content, created_at, is_deleted, ban_check_status, moderation_state, reactions(emoji, user_id)')
         .eq('chat_id', chatId)
         .eq('is_deleted', false)
         .order('created_at', { ascending: true })
 
-      const messages: FeedMsg[] = (msgs ?? []).map(m => {
+      const messages: FeedMsg[] = (msgs ?? []).filter(m => canDisplayMessage(m, uid)).map(m => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const r = (m as any).reactions as Reaction[] ?? []
         messageIdsRef.current.add(m.id)
@@ -185,33 +185,33 @@ export default function ChatPage() {
   useEffect(() => {
     if (!userId) return
 
+    let disposed = false
+    let refreshing = false
+    async function refreshMessages() {
+      if (refreshing) return
+      refreshing = true
+      try {
+        const { data, error } = await supabase.from('messages')
+          .select('id, chat_id, sender_id, content, created_at, is_deleted, ban_check_status, moderation_state, reactions(emoji, user_id)')
+          .eq('chat_id', chatId).order('created_at', { ascending: true })
+        if (disposed || error || !data) return
+        const messages: FeedMsg[] = data.filter(m => canDisplayMessage(m, userId!))
+          .map(m => ({ kind: 'message', ...m, reactions: m.reactions ?? [] }))
+        messageIdsRef.current = new Set(messages.map(m => m.id))
+        setFeed(prev => [...prev.filter(item => item.kind !== 'message'), ...messages]
+          .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)))
+      } finally { refreshing = false }
+    }
+    // Recovers visibility-changing UPDATEs and missed Realtime events without trusting WAL text.
+    const poll = setInterval(() => { void refreshMessages() }, 5000)
+    void refreshMessages()
+
     const channel = supabase
       .channel(`chat-room-${chatId}`)
 
-      // 新メッセージ
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
-        (payload) => {
-          const m = payload.new as Message & { is_deleted: boolean }
-          if (m.is_deleted) return
-          messageIdsRef.current.add(m.id)
-          reactionsRef.current.set(m.id, [])
-          setFeed(prev => [...prev, { kind: 'message', ...m, reactions: [] }])
-        }
-      )
-
-      // Layer 2 BAN: メッセージ削除フラグを受信して画面から消す
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
-        (payload) => {
-          const m = payload.new as Message & { is_deleted: boolean }
-          if (m.is_deleted) {
-            setFeed(prev => prev.filter(item => !(item.kind === 'message' && item.id === m.id)))
-          }
-        }
-      )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
+        () => { void refreshMessages() })
 
       // 新ドリンク
       .on(
@@ -267,7 +267,7 @@ export default function ChatPage() {
 
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
+    return () => { disposed = true; clearInterval(poll); supabase.removeChannel(channel) }
   }, [chatId, userId, drinkItems])
 
   // ── スクロール ─────────────────────────────────────────────────
@@ -289,23 +289,19 @@ export default function ChatPage() {
     setSendError(null)
     setSending(true)
 
-    const { data: inserted } = await supabase
+    const { error } = await supabase
       .from('messages')
       .insert({ chat_id: chatId, sender_id: userId, content: trimmed })
       .select('id')
       .single()
 
-    setInput('')
     setSending(false)
-
-    // Layer 2: Claude API による非同期審査（fire-and-forget）
-    if (inserted) {
-      fetch('/api/moderate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: inserted.id, content: trimmed }),
-      }).catch(() => {})
+    if (error) {
+      setSendError('送信できませんでした。しばらく待ってから再度お試しください。')
+      return
     }
+    setInput('')
+    // INSERT atomically enqueues mandatory server moderation; no browser API call is required.
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -323,10 +319,6 @@ export default function ChatPage() {
     await supabase
       .from('drink_bar_uses')
       .insert({ chat_id: chatId, sender_id: userId, item_id: item.id })
-    // メロンソーダを送ったとき相手のカウンターをインクリメント
-    if (item.key === 'melon_soda' && otherUserId) {
-      await supabase.rpc('increment_melon_soda_received', { target_user_id: otherUserId })
-    }
     setSending(false)
   }
 
@@ -376,17 +368,11 @@ export default function ChatPage() {
         .maybeSingle()
       if (theirStock) {
         setStockStatus('mutual')
-        fetch('/api/push/send', {
+        apiFetch('/api/push/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            targetUserId: otherUserId,
-            payload: {
-              title: 'WAY',
-              body: '相思相愛になった。ストックされた。',
-              url: `/chat/${chatId}`,
-              tag: `mutual-${chatId}`,
-            },
+            chatId, event: 'mutual_stock',
           }),
         }).catch(() => {})
       } else {
